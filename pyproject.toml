@@ -1,0 +1,62 @@
+[project]
+name = "gwmd"
+version = "0.1.0"
+description = "Google Workspace + Microsoft documents → Markdown / typed JSON (markitdown を再設計: 取得と解析を分離し pure parser を confine)"
+readme = "README.md"
+authors = [
+    { name = "矢部 竜季", email = "" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "google-api-python-client>=2.197.0",
+    "google-auth-oauthlib>=1.4.0",
+    "openpyxl>=3.1.5",
+    "pydantic>=2.13.4",
+    "python-docx>=1.2.0",
+    "python-dotenv>=1.2.2",
+    "python-pptx>=1.0.2",
+    "typer>=0.26.4",
+]
+
+[project.scripts]
+gwmd = "gwmd.surfaces.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.11.17,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.11",
+    "pytest>=9.0.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+# parsers / serializers / ir は pure 層: I/O や fetcher を import してはならない。
+# これを CI(lint-imports) で機械的に強制し、confine の前提（解析層に発信能力が無い）を守る。
+[tool.importlinter]
+root_packages = ["gwmd"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "pure layers must not perform I/O or import the fetcher"
+type = "forbidden"
+source_modules = [
+    "gwmd.ir",
+    "gwmd.parsers",
+    "gwmd.serializers",
+]
+forbidden_modules = [
+    "gwmd.fetcher",
+    "requests",
+    "urllib",
+    "urllib3",
+    "http",
+    "socket",
+    "googleapiclient",
+    "google_auth_oauthlib",
+    "google",
+]
