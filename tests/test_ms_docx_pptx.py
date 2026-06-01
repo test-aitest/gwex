@@ -8,10 +8,10 @@ import docx as pydocx
 import pptx as pypptx
 from pptx.util import Inches
 
-from gwmd.ir import Divider, Heading, Note, Table
-from gwmd.parsers import docx as docx_parser
-from gwmd.parsers import pptx as pptx_parser
-from gwmd.serializers import markdown as md
+from gwex.ir import Divider, Heading, Note, Table
+from gwex.parsers import docx as docx_parser
+from gwex.parsers import pptx as pptx_parser
+from gwex.serializers import markdown as md
 
 
 def test_docx_heading_paragraph_table():

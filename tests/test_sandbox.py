@@ -12,7 +12,7 @@ from io import BytesIO
 import openpyxl
 import pytest
 
-from gwmd import parser_entry, sandbox
+from gwex import parser_entry, sandbox
 
 pytestmark = pytest.mark.skipif(not sandbox.available(), reason="sandbox-exec が無い")
 
@@ -47,7 +47,7 @@ def test_profile_denies_network():
 def test_profile_denies_file_write():
     proc = subprocess.run(
         ["sandbox-exec", "-p", sandbox._PROFILE, sys.executable, "-c",
-         "open('/tmp/gwmd_sbx_probe.txt','w').write('x')"],
+         "open('/tmp/gwex_sbx_probe.txt','w').write('x')"],
         capture_output=True, text=True,
     )
     assert proc.returncode != 0

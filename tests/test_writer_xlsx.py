@@ -9,7 +9,7 @@ import openpyxl
 import pytest
 from PIL import Image as PILImage
 
-from gwmd.writer import xlsx_writer
+from gwex.writer import xlsx_writer
 
 
 @pytest.fixture

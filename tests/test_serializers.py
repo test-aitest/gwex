@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from gwmd.ir import (
+from gwex.ir import (
     CodeBlock,
     Divider,
     Document,
@@ -21,8 +21,8 @@ from gwmd.ir import (
     Text,
     UrlRef,
 )
-from gwmd.serializers import markdown as md
-from gwmd.serializers import json as jsonser
+from gwex.serializers import markdown as md
+from gwex.serializers import json as jsonser
 
 
 def _doc(*blocks) -> Document:

@@ -6,7 +6,7 @@ from io import BytesIO
 
 import openpyxl
 
-from gwmd.domains import testspec
+from gwex.domains import testspec
 
 
 def _build() -> bytes:
@@ -51,6 +51,35 @@ def test_hierarchy_and_merge_fill():
     b = spec.screens[1]
     assert b.groups[0].medium_category == "中項目Y"
     assert b.groups[0].cases[0].execution_steps == ["単一手順"]
+
+
+def test_small_category_resets_on_higher_level_change():
+    """空の小項目を持つ新グループに、直前グループの小項目が漏れ込まないこと。
+
+    （漏れると 書込→再抽出 でキーが変わり dedup の冪等が崩れる回帰。）
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "3.結合テスト項目"
+    ws["C7"], ws["E7"], ws["G7"] = "画面名", "中項目名", "小項目名"
+    ws["H7"], ws["I7"], ws["J7"] = "No", "確認内容", "実施手順"
+    # 画面A / 中項目X / 小項目S1
+    ws["C10"], ws["E10"], ws["G10"] = "画面A", "中項目X", "小項目S1"
+    ws["H10"], ws["I10"] = 1, "確認1"
+    # 画面A / 中項目Y（中項目が変わる）/ 小項目は空 → "" であるべき（S1 を継がない）
+    ws["E11"] = "中項目Y"
+    ws["H11"], ws["I11"] = 1, "確認2"
+    # 画面B（画面が変わる）/ 中項目Z / 小項目は空 → "" であるべき
+    ws["C12"], ws["E12"] = "画面B", "中項目Z"
+    ws["H12"], ws["I12"] = 1, "確認3"
+    buf = BytesIO()
+    wb.save(buf)
+
+    spec = testspec.extract(buf.getvalue(), "3.結合テスト項目")
+    groups = {(s.screen_name, g.medium_category): g for s in spec.screens for g in s.groups}
+    assert groups[("画面A", "中項目X")].small_category == "小項目S1"
+    assert groups[("画面A", "中項目Y")].small_category == ""   # 中項目変化で小項目リセット
+    assert groups[("画面B", "中項目Z")].small_category == ""   # 画面変化で小項目リセット
 
 
 def test_marker_split_when_no_newline():

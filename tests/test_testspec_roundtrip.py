@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import openpyxl
 
-from gwmd.domains import testspec, testspec_writer
-from gwmd.domains.model import Case, Group, Screen, TestSpec
-from gwmd.writer import xlsx_writer
+from gwex.domains import testspec, testspec_writer
+from gwex.domains.model import Case, Group, Screen, TestSpec
+from gwex.writer import xlsx_writer
 
 
 def _spec() -> TestSpec:

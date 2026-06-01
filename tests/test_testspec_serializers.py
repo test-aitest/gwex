@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from gwmd.domains.model import Case, Group, Screen, TestSpec
-from gwmd.serializers import testspec_json, testspec_md
+from gwex.domains.model import Case, Group, Screen, TestSpec
+from gwex.serializers import testspec_json, testspec_md
 
 
 def _spec() -> TestSpec:

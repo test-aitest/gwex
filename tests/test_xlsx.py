@@ -6,9 +6,9 @@ from io import BytesIO
 
 import openpyxl
 
-from gwmd.ir import Heading, Table
-from gwmd.parsers import xlsx
-from gwmd.serializers import markdown as md
+from gwex.ir import Heading, Table
+from gwex.parsers import xlsx
+from gwex.serializers import markdown as md
 
 
 def _xlsx_bytes(rows: list[list], title: str = "Sheet1") -> bytes:

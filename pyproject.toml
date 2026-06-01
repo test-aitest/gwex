@@ -1,5 +1,5 @@
 [project]
-name = "gwmd"
+name = "gwex"
 version = "0.1.0"
 description = "Google Workspace + Microsoft documents → Markdown / typed JSON (markitdown を再設計: 取得と解析を分離し pure parser を confine)"
 readme = "README.md"
@@ -21,8 +21,8 @@ dependencies = [
 ]
 
 [project.scripts]
-gwmd = "gwmd.surfaces.cli:app"
-gwmd-mcp = "gwmd.surfaces.mcp:main"
+gwex = "gwex.surfaces.cli:app"
+gwex-mcp = "gwex.surfaces.mcp:main"
 
 [build-system]
 requires = ["uv_build>=0.11.17,<0.12.0"]
@@ -41,20 +41,20 @@ pythonpath = ["src"]
 # parsers / serializers / ir は pure 層: I/O や fetcher を import してはならない。
 # これを CI(lint-imports) で機械的に強制し、confine の前提（解析層に発信能力が無い）を守る。
 [tool.importlinter]
-root_packages = ["gwmd"]
+root_packages = ["gwex"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "pure layers must not perform I/O or import the fetcher"
 type = "forbidden"
 source_modules = [
-    "gwmd.ir",
-    "gwmd.parsers",
-    "gwmd.serializers",
-    "gwmd.domains",
+    "gwex.ir",
+    "gwex.parsers",
+    "gwex.serializers",
+    "gwex.domains",
 ]
 forbidden_modules = [
-    "gwmd.fetcher",
+    "gwex.fetcher",
     "requests",
     "urllib",
     "urllib3",

@@ -5,9 +5,9 @@ NOTE: 実 API レスポンスでの検証は OAuth 設定後に差し替える�
 
 from __future__ import annotations
 
-from gwmd.ir import Divider, Heading, Image, ListBlock, Note, Paragraph, Table
-from gwmd.parsers import gdocs, gsheet, gslide
-from gwmd.serializers import markdown as md
+from gwex.ir import Divider, Heading, Image, ListBlock, Note, Paragraph, Table
+from gwex.parsers import gdocs, gsheet, gslide
+from gwex.serializers import markdown as md
 
 
 # --- Docs -----------------------------------------------------------------
