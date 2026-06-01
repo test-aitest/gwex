@@ -1,0 +1,18 @@
+# gwmd testspec の既定マッピング例（実「3.結合テスト項目」テンプレ準拠）。
+# --mapping でこの形式の TOML を渡すと上書きできる。
+# columns の値は 列レター("C") / 列インデックス(1始まり int) / ヘッダラベル("確認内容") のいずれか。
+
+header_row = 7        # 1 始まり
+data_start_row = 10   # 1 始まり
+
+[columns]
+screen_name          = "C"   # B=画面No, C=画面名
+medium_category      = "E"   # D=中項目No, E=中項目名
+small_category       = "G"   # F=小項目No, G=小項目名
+test_no              = "H"   # 確認内容の通し番号
+verification_content = "I"
+execution_steps      = "J"
+
+[options]
+fill        = ["screen_name", "medium_category", "small_category", "execution_steps"]
+steps_split = "newline+marker"   # 改行で分割、無ければ ①②③/(1)(2) で分割

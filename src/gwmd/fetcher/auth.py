@@ -20,7 +20,7 @@ load_dotenv()
 SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/documents.readonly",
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/spreadsheets",  # 読み書き（書き戻しに必要）
     "https://www.googleapis.com/auth/presentations.readonly",
 ]
 
@@ -64,17 +64,31 @@ def _build_flow() -> InstalledAppFlow:
     )
 
 
+def _granted_scopes() -> set[str]:
+    """token.json に実際に保存された付与スコープを読む（要求スコープではなく）。"""
+    import json
+
+    try:
+        return set(json.loads(TOKEN_PATH.read_text()).get("scopes", []))
+    except Exception:
+        return set()
+
+
 def get_credentials() -> Credentials:
-    """有効な認証情報を返す。無ければブラウザで OAuth 同意フローを走らせる。"""
+    """有効な認証情報を返す。無ければ／付与スコープ不足なら OAuth 同意フローを走らせる。"""
     creds: Credentials | None = None
-    if TOKEN_PATH.exists():
+    # 実際の付与スコープが要求スコープを満たす時だけ既存トークンを使う。
+    if TOKEN_PATH.exists() and set(SCOPES).issubset(_granted_scopes()):
         creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
-    if creds and creds.valid:
-        return creds
-    if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-    else:
-        creds = _build_flow().run_local_server(port=0)
+        if creds.valid:
+            return creds
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+            return creds
+    # トークン無し or スコープ不足 → 新規同意（ブラウザ）
+    creds = _build_flow().run_local_server(port=0)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
     return creds
