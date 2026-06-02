@@ -32,8 +32,14 @@ function doPost(e) {
       for (var rr = 0; rr < numRows; rr++) h += sheet.getRowHeight(startRow + rr);
       var img = sheet.insertImage(blob, startCol, startRow);
       var ow = img.getWidth(), oh = img.getHeight();
-      var scale = Math.min(w / ow, h / oh);
-      img.setWidth(Math.max(1, Math.round(ow * scale))).setHeight(Math.max(1, Math.round(oh * scale)));
+      var fit = Math.min(w / ow, h / oh);
+      var scale = fit * (p.scale ? p.scale : 1);   // p.scale=0.8 で枠の80%に縮小
+      var nw = Math.max(1, Math.round(ow * scale));
+      var nh = Math.max(1, Math.round(oh * scale));
+      img.setWidth(nw).setHeight(nh);
+      // 枠内で中央寄せ（アンカーセル左上からのオフセット）
+      img.setAnchorCellXOffset(Math.max(0, Math.round((w - nw) / 2)));
+      img.setAnchorCellYOffset(Math.max(0, Math.round((h - nh) / 2)));
     } else {
       var cell = sheet.getRange(p.cell);
       sheet.insertImage(blob, cell.getColumn(), cell.getRow());

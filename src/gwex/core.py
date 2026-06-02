@@ -106,15 +106,17 @@ def write_testspec(
     *,
     append: bool = False,
     dedup: bool = False,
+    apply_format: bool = False,
     output=None,
 ) -> str:
     """TestSpec(JSON) を target（ローカル .xlsx / Google URL）のシートに展開記入する。
 
     append: 既存データの下に追記。dedup: 既存と完全一致するケースを除外し冪等に。
     append/dedup 時は採番を既存グループの最大Noから継続する。
+    apply_format: 追記ブロックに既存テンプレ体裁（罫線/縦結合/親番号）を後付けする（ローカル .xlsx のみ）。
     """
     from gwex.domains import testspec_writer
-    from gwex.domains.model import TestSpec
+    from gwex.domains.model import DEFAULT_MAPPING, TestSpec
     from gwex.fetcher import google
 
     spec = TestSpec.model_validate_json(source_json)
@@ -140,7 +142,43 @@ def write_testspec(
         return gsheet_writer.write_cells(target, sheet, asgn)
     from gwex.writer import xlsx_writer
 
-    return xlsx_writer.write_cells(target, sheet, asgn, output=output)
+    dest = xlsx_writer.write_cells(target, sheet, asgn, output=output)
+
+    if apply_format:
+        from gwex.writer import xlsx_format
+
+        cfg = mapping or DEFAULT_MAPPING
+        screen_start_no = (_max_screen_no(target, sheet, cfg) + 1) if existing is not None else 1
+        plan = testspec_writer.layout(
+            spec, cfg,
+            start_row=(start_row if start_row is not None else cfg.data_start_row),
+            screen_start_no=screen_start_no,
+        )
+        xlsx_format.format_testspec_block(dest, sheet, plan, cfg)
+    return dest
+
+
+def _max_screen_no(target: str, sheet: str, cfg) -> int:
+    """既存の画面No列（number_columns['screen_name']）の最大整数を返す。無ければ 0。"""
+    col = (cfg.number_columns or {}).get("screen_name")
+    if not col:
+        return 0
+    from openpyxl import load_workbook
+    from openpyxl.utils import column_index_from_string
+
+    wb = load_workbook(target, read_only=True)
+    ws = wb[sheet]
+    ci = column_index_from_string(col)
+    mx = 0
+    for r_idx, row in enumerate(ws.iter_rows(min_col=ci, max_col=ci, values_only=True), start=1):
+        if r_idx < cfg.data_start_row:
+            continue
+        v = row[0]
+        if isinstance(v, int):
+            mx = max(mx, v)
+        elif isinstance(v, str) and v.strip().isdigit():
+            mx = max(mx, int(v.strip()))
+    return mx
 
 
 def _last_data_row(target: str, sheet: str, mapping, is_google: bool) -> int:

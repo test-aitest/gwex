@@ -66,6 +66,11 @@ class MappingConfig(BaseModel):
     header_row: int = 7          # 1 始まり。ヘッダ行（ラベル解決と検証に使用）
     data_start_row: int = 10     # 1 始まり。データ開始行
     columns: dict[str, Union[str, int]] = Field(default_factory=dict)
+    # 整形（罫線/結合/番号）用。No 列（画面/中項目/小項目の番号列）と枠の左右端。
+    # 未設定なら整形は最小限（番号なし）。box_right_col 未設定時は値列の最右で代用。
+    number_columns: dict[str, str] = Field(default_factory=dict)
+    box_left_col: Optional[str] = None
+    box_right_col: Optional[str] = None
     fill: list[str] = Field(
         default_factory=lambda: [
             "screen_name",
@@ -113,4 +118,13 @@ DEFAULT_MAPPING = MappingConfig(
         "verification_content": "I",
         "execution_steps": "J",
     },
+    # 画面/中項目/小項目の No 列（値列の左隣）。整形時に親番号を採番・縦結合する。
+    number_columns={
+        "screen_name": "B",
+        "medium_category": "D",
+        "small_category": "F",
+    },
+    # 枠（罫線）の左右端。B〜S が 1 ケース行の箱（実施日/結果/備考まで含む）。
+    box_left_col="B",
+    box_right_col="S",
 )

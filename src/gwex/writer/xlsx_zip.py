@@ -300,6 +300,8 @@ def set_cell_image(
     width: Optional[int] = None,
     height: Optional[int] = None,
     max_dim: Optional[int] = None,
+    col_off_px: int = 0,
+    row_off_px: int = 0,
     output: Optional[str] = None,
 ) -> str:
     """既存内容（埋め込み画像含む）を保持して over-cell 画像を注入する。
@@ -363,8 +365,8 @@ def set_cell_image(
     r_ns = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
     anchor_xml = (
         f'<{p}oneCellAnchor>'
-        f'<{p}from><{p}col>{col0}</{p}col><{p}colOff>0</{p}colOff>'
-        f'<{p}row>{row0}</{p}row><{p}rowOff>0</{p}rowOff></{p}from>'
+        f'<{p}from><{p}col>{col0}</{p}col><{p}colOff>{col_off_px * _EMU}</{p}colOff>'
+        f'<{p}row>{row0}</{p}row><{p}rowOff>{row_off_px * _EMU}</{p}rowOff></{p}from>'
         f'<{p}ext cx="{cx}" cy="{cy}"/>'
         f'<{p}pic>'
         f'<{p}nvPicPr><{p}cNvPr id="{pic_id}" name="capture{midx}"/>'

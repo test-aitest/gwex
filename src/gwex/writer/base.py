@@ -41,13 +41,15 @@ def set_cell_image(
     width: Optional[int] = None,
     height: Optional[int] = None,
     max_dim: Optional[int] = None,
+    scale: float = 1.0,
     output: Optional[str] = None,
 ) -> str:
     backend, is_google = _backend(target)
     if is_google:
         return backend.set_cell_image(
             target, sheet, anchor, image_path,
-            cell_range=cell_range, insert_rows=insert_rows, width=width, height=height, max_dim=max_dim,
+            cell_range=cell_range, insert_rows=insert_rows, width=width, height=height,
+            max_dim=max_dim, scale=scale,
         )
     # ローカル .xlsx の画像注入は xlsx_zip 経由（最小タッチの ZIP 注入）。openpyxl 版
     # （xlsx_writer.set_cell_image）も画像自体は保持するが、round-trip でグラフ/ピボット等の

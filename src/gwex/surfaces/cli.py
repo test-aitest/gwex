@@ -73,12 +73,13 @@ def write_testspec(
     mapping: Optional[str] = typer.Option(None, "--mapping", help="列マッピング TOML（省略時は既定）"),
     append: bool = typer.Option(False, "--append", help="既存データの下に追記（採番は既存グループ最大Noから継続）"),
     dedup: bool = typer.Option(False, "--dedup", help="既存と完全一致するケースを除外（冪等）"),
+    fmt: bool = typer.Option(False, "--format", help="追記ブロックに既存体裁（罫線/縦結合/親番号）を後付け（.xlsx）"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
 ) -> None:
     cfg = core.load_mapping(mapping) if mapping else None
     with open(json_path, encoding="utf-8") as f:
         spec_json = f.read()
-    dest = core.write_testspec(spec_json, target, sheet, cfg, append=append, dedup=dedup, output=output)
+    dest = core.write_testspec(spec_json, target, sheet, cfg, append=append, dedup=dedup, apply_format=fmt, output=output)
     typer.echo(f"テスト仕様を書き込みました: {dest}")
 
 
@@ -122,15 +123,43 @@ def set_image(
     width: Optional[int] = typer.Option(None, "--width", help="幅(px)"),
     height: Optional[int] = typer.Option(None, "--height", help="高さ(px)"),
     max_dim: Optional[int] = typer.Option(None, "--max-dim", help="長辺上限px（超過時に自動縮小）"),
+    scale: float = typer.Option(1.0, "--scale", help="枠フィット後の倍率（Google: 0.8で枠の80%＝余白付き・中央寄せ）"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（xlsx のみ・既定 in-place）"),
 ) -> None:
     from gwex.writer import base
 
     dest = base.set_cell_image(
         target, sheet, cell, image,
-        cell_range=cell_range, insert_rows=insert_rows, width=width, height=height, max_dim=max_dim, output=output,
+        cell_range=cell_range, insert_rows=insert_rows, width=width, height=height,
+        max_dim=max_dim, scale=scale, output=output,
     )
     typer.echo(f"画像を挿入しました: {dest}")
+
+
+@app.command(name="set-section")
+def set_section(
+    target: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    sheet: str = typer.Option(..., "--sheet", help="対象シート名（例: 2.画面イメージ(iOS)）"),
+    top_row: int = typer.Option(..., "--top-row", help="セクション見出しの行（1始まり）"),
+    title: str = typer.Option(..., "--title", help="セクション見出し（画面名など）"),
+    before: Optional[str] = typer.Option(None, "--before", help="修正前 画像パス"),
+    after: Optional[str] = typer.Option(None, "--after", help="修正後 画像パス"),
+    left_cols: str = typer.Option("C,L", "--cols", help="セクション左右端の列（既定 C,L）"),
+    split_col: str = typer.Option("H", "--split", help="修正後の開始列（既定 H）"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
+) -> None:
+    """枠付き before/after セクションを作成して画像を配置する。
+
+    画像は横幅=カラム幅で固定、縦は画像高さに収まる行数だけ確保（空行を作らない）。
+    """
+    from gwex.writer import xlsx_format
+
+    lc = tuple(left_cols.split(","))
+    dest = xlsx_format.create_before_after_section(
+        target, sheet, top_row, title, before, after,
+        left_cols=lc, split_col=split_col, output=output,
+    )
+    typer.echo(f"枠付きセクションを作成しました: {dest}")
 
 
 def main() -> None:

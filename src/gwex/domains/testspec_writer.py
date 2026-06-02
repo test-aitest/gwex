@@ -59,3 +59,69 @@ def assignments(
                 put("execution_steps", "\n".join(case.execution_steps))
                 row += 1
     return out
+
+
+def layout(
+    spec: TestSpec,
+    mapping: Optional[MappingConfig] = None,
+    start_row: Optional[int] = None,
+    screen_start_no: int = 1,
+) -> dict:
+    """整形用の配置情報（親セルの縦結合スパンと採番）を計算する。pure。
+
+    返り値:
+      data_first_row / data_last_row: 書き込んだケース行の範囲(1始まり)
+      merges: 縦結合すべき範囲レター文字列 ["B113:B115", ...]（画面/中項目/小項目の No 列・値列）
+      numbers: [(cell, no)] 親番号（画面No=連番, 中項目No=画面内連番, 小項目No=中項目内連番）
+
+    画面は全ケース行、中項目は同一中項目の連続グループ、小項目は1グループでスパンを取る。
+    番号列・結合は mapping.number_columns / columns に定義された列にのみ適用。
+    """
+    cfg = mapping or DEFAULT_MAPPING
+    val = {
+        r: get_column_letter(cfg.column_index(r) + 1)
+        for r in ("screen_name", "medium_category", "small_category")
+        if cfg.column_index(r) is not None
+    }
+    num = dict(cfg.number_columns or {})
+    row = start_row if start_row is not None else cfg.data_start_row
+    first = row
+    merges: list[str] = []
+    numbers: list[tuple[str, int]] = []
+
+    def span(role: str, r0: int, r1: int, no: int) -> None:
+        for table in (val, num):
+            c = table.get(role)
+            if c and r1 > r0:
+                merges.append(f"{c}{r0}:{c}{r1}")
+        if role in num:
+            numbers.append((f"{num[role]}{r0}", no))
+
+    sno = screen_start_no
+    for screen in spec.screens:
+        s0 = row
+        mno = 0
+        j = 0
+        groups = screen.groups
+        while j < len(groups):
+            med = groups[j].medium_category
+            k = j + 1
+            while k < len(groups) and groups[k].medium_category == med:
+                k += 1
+            m0 = row
+            mno += 1
+            for gi in range(j, k):
+                g0 = row
+                row += len(groups[gi].cases)
+                span("small_category", g0, row - 1, gi - j + 1)
+            span("medium_category", m0, row - 1, mno)
+            j = k
+        span("screen_name", s0, row - 1, sno)
+        sno += 1
+
+    return {
+        "data_first_row": first,
+        "data_last_row": row - 1,
+        "merges": merges,
+        "numbers": numbers,
+    }

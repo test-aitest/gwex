@@ -95,8 +95,11 @@ def set_cell_image(
     width: Optional[int] = None,
     height: Optional[int] = None,
     max_dim: Optional[int] = None,
+    scale: float = 1.0,
 ) -> str:
     """Apps Script Web アプリ経由でセル内画像を base64 埋め込みする。
+
+    scale: 枠フィット後にさらに掛ける倍率（0.8 で枠の80%＝周囲に余白）。中央寄せされる。
 
     要: 環境変数 GWEX_APPSCRIPT_URL（デプロイ済み Web アプリ URL）。
     画像は data URL で送るため公開リンク不要・PII 露出なし。
@@ -129,6 +132,7 @@ def set_cell_image(
             "dataUrl": data_url,
             "width": width,
             "height": height,
+            "scale": scale,
         },
         timeout=60,
     )
