@@ -158,6 +158,37 @@ def write_testspec(
     return dest
 
 
+def create_section(
+    target: str,
+    sheet: str,
+    top_row: int,
+    title: str,
+    before_image=None,
+    after_image=None,
+    *,
+    left_cols=("C", "L"),
+    split_col: str = "H",
+    scale: float = 0.8,
+    output=None,
+) -> str:
+    """before/after セクション（枠/青背景/中央/画像80%中央）を作る。target で Excel/Google 振り分け。"""
+    from gwex.fetcher import google
+
+    if google.detect(target) is not None:
+        from gwex.writer import gsheet_format
+
+        return gsheet_format.create_before_after_section(
+            target, sheet, top_row, title, before_image, after_image,
+            left_cols=left_cols, split_col=split_col, scale=scale,
+        )
+    from gwex.writer import xlsx_format
+
+    return xlsx_format.create_before_after_section(
+        target, sheet, top_row, title, before_image, after_image,
+        left_cols=left_cols, split_col=split_col, output=output,
+    )
+
+
 def _max_screen_no(target: str, sheet: str, cfg) -> int:
     """既存の画面No列（number_columns['screen_name']）の最大整数を返す。無ければ 0。"""
     col = (cfg.number_columns or {}).get("screen_name")

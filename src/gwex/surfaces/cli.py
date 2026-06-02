@@ -138,7 +138,7 @@ def set_image(
 
 @app.command(name="set-section")
 def set_section(
-    target: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    target: str = typer.Argument(..., help="ローカル .xlsx パス または Google スプレッドシート URL"),
     sheet: str = typer.Option(..., "--sheet", help="対象シート名（例: 2.画面イメージ(iOS)）"),
     top_row: int = typer.Option(..., "--top-row", help="セクション見出しの行（1始まり）"),
     title: str = typer.Option(..., "--title", help="セクション見出し（画面名など）"),
@@ -146,18 +146,17 @@ def set_section(
     after: Optional[str] = typer.Option(None, "--after", help="修正後 画像パス"),
     left_cols: str = typer.Option("C,L", "--cols", help="セクション左右端の列（既定 C,L）"),
     split_col: str = typer.Option("H", "--split", help="修正後の開始列（既定 H）"),
-    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
+    scale: float = typer.Option(0.8, "--scale", help="画像を枠の何倍にするか（既定0.8＝80%・中央）"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（xlsx のみ・既定 in-place）"),
 ) -> None:
-    """枠付き before/after セクションを作成して画像を配置する。
+    """枠付き before/after セクションを作成して画像を配置する（Excel / Google 両対応）。
 
-    画像は横幅=カラム幅で固定、縦は画像高さに収まる行数だけ確保（空行を作らない）。
+    見出し＋修正前/修正後ラベル＋青背景＋箱罫線、画像は枠の scale(80%)・比率維持・中央配置。
     """
-    from gwex.writer import xlsx_format
-
     lc = tuple(left_cols.split(","))
-    dest = xlsx_format.create_before_after_section(
+    dest = core.create_section(
         target, sheet, top_row, title, before, after,
-        left_cols=lc, split_col=split_col, output=output,
+        left_cols=lc, split_col=split_col, scale=scale, output=output,
     )
     typer.echo(f"枠付きセクションを作成しました: {dest}")
 

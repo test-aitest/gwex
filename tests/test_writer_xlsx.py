@@ -1,13 +1,13 @@
-"""Excel 書き戻し（set_cell_text / set_cell_image / write_cells）のテスト。
+"""Excel 書き戻し（set_cell_text / write_cells / last_data_row）のテスト。
 
 実ファイルは触らず、tmp に作った xlsx に対して書き込み→再オープン検証する。
+（画像注入は writer/xlsx_zip に一本化したため tests/test_xlsx_zip_image.py を参照）
 """
 
 from __future__ import annotations
 
 import openpyxl
 import pytest
-from PIL import Image as PILImage
 
 from gwex.writer import xlsx_writer
 
@@ -42,10 +42,3 @@ def test_write_cells(book):
     assert wb["S"]["B1"].value == 1
 
 
-def test_set_cell_image(book, tmp_path):
-    img_path = tmp_path / "cap.png"
-    PILImage.new("RGB", (20, 10), (255, 0, 0)).save(img_path)
-    xlsx_writer.set_cell_image(book, "S", "C3", str(img_path), width=40, height=20)
-    wb = openpyxl.load_workbook(book)
-    # 画像がワークシートに埋め込まれている
-    assert len(wb["S"]._images) == 1
