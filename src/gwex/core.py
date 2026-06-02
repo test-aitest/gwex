@@ -67,13 +67,8 @@ def _xlsx_bytes(source: str) -> bytes:
 
     file_id = google.detect(source)
     if file_id is not None:
-        kind, raw = google.fetch(file_id)
-        if kind != "xlsx":
-            raise ValueError(
-                "ネイティブ Google シートの testspec 抽出は後続対応です。"
-                "アップロードされた Excel かローカル .xlsx を指定してください。"
-            )
-        return raw
+        # ネイティブ Google シートは Drive で xlsx にエクスポート、アップロード xlsx は実バイト取得
+        return google.fetch_xlsx(file_id)
     path = Path(source)
     if not path.exists():
         raise ValueError(f"ソースを解決できません: {source}")

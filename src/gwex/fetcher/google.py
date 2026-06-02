@@ -66,6 +66,33 @@ def fetch(file_id: str) -> tuple[str, bytes]:
     return kind, data
 
 
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def fetch_xlsx(file_id: str) -> bytes:
+    """file_id を xlsx バイト列として取得する（testspec 抽出など openpyxl 用）。
+
+    - ネイティブ Google スプレッドシート → Drive API で xlsx に**エクスポート**（結合セル含む）
+    - アップロード済み .xlsx → 実バイトをダウンロード
+    それ以外は ValueError。
+    """
+    creds = auth.get_credentials()
+    drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+    meta = (
+        drive.files()
+        .get(fileId=file_id, fields="mimeType,name", supportsAllDrives=True)
+        .execute()
+    )
+    mime = meta.get("mimeType", "")
+    if mime == "application/vnd.google-apps.spreadsheet":
+        return drive.files().export_media(fileId=file_id, mimeType=_XLSX_MIME).execute()
+    if mime == _XLSX_MIME:
+        return drive.files().get_media(fileId=file_id, supportsAllDrives=True).execute()
+    raise ValueError(
+        f"testspec 抽出は Google スプレッドシートまたは .xlsx のみ対応です: {mime}（{meta.get('name')}）"
+    )
+
+
 def _fetch_native(kind: str, file_id: str, creds) -> dict:
     if kind == "gdocs":
         svc = build("docs", "v1", credentials=creds, cache_discovery=False)
