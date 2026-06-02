@@ -1,7 +1,7 @@
 [project]
 name = "gwex"
 version = "0.1.0"
-description = "Google Workspace + Microsoft documents → Markdown / typed JSON (markitdown を再設計: 取得と解析を分離し pure parser を confine)"
+description = "Google Workspace + Microsoft documents → Markdown / typed JSON（取得と解析を分離し pure parser を confine）"
 readme = "README.md"
 authors = [
     { name = "矢部 竜季", email = "" }
