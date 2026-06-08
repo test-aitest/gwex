@@ -36,6 +36,19 @@ def convert(
 
 
 @app.command()
+def share(
+    path: str = typer.Argument(..., help="共有したいローカルファイル(.xlsx/.docx/.pptx/.pdf)"),
+    convert: bool = typer.Option(False, "--convert", help="Google ネイティブ形式(スプレッドシート/ドキュメント/スライド)に変換して共有"),
+    private: bool = typer.Option(False, "--private", help="anyone-with-link 共有をしない（既定は anyone reader）"),
+) -> None:
+    """Office ファイルを Google Drive にアップロードし、共有 URL を出力する（要 drive.file スコープ）。"""
+    from gwex import share as share_mod
+
+    url = share_mod.share_file(path, convert=convert, public=not private)
+    typer.echo(url)
+
+
+@app.command()
 def testspec(
     source: str = typer.Argument(..., help="Google URL またはローカル .xlsx パス"),
     sheet: str = typer.Option(..., "--sheet", help="対象シート名（例: 3.結合テスト項目）"),

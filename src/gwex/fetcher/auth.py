@@ -20,6 +20,7 @@ load_dotenv()
 
 SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file",  # 自分が作成したファイルの作成/共有（share 用）
     "https://www.googleapis.com/auth/documents.readonly",
     "https://www.googleapis.com/auth/spreadsheets",  # 読み書き（書き戻しに必要）
     "https://www.googleapis.com/auth/presentations.readonly",
