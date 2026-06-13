@@ -40,12 +40,25 @@ def share(
     path: str = typer.Argument(..., help="共有したいローカルファイル(.xlsx/.docx/.pptx/.pdf)"),
     convert: bool = typer.Option(False, "--convert", help="Google ネイティブ形式(スプレッドシート/ドキュメント/スライド)に変換して共有"),
     private: bool = typer.Option(False, "--private", help="anyone-with-link 共有をしない（既定は anyone reader）"),
+    name: Optional[str] = typer.Option(None, "--name", help="Drive 上の表示名（2026-000xxx_概要設計書_結合テスト項目 等の正式名を渡す）"),
 ) -> None:
     """Office ファイルを Google Drive にアップロードし、共有 URL を出力する（要 drive.file スコープ）。"""
     from gwex import share as share_mod
 
-    url = share_mod.share_file(path, convert=convert, public=not private)
+    url = share_mod.share_file(path, convert=convert, public=not private, name=name)
     typer.echo(url)
+
+
+@app.command()
+def rename(
+    target: str = typer.Argument(..., help="Drive ファイルの URL または ID"),
+    name: str = typer.Option(..., "--name", help="新しい表示名"),
+) -> None:
+    """既存の Drive ファイル(スプシ等)の表示名を変更する（share 後に名前がズレたときの修正）。"""
+    from gwex import share as share_mod
+
+    new_name, url = share_mod.rename_file(target, name)
+    typer.echo(f"表示名を変更しました: 「{new_name}」 {url}")
 
 
 @app.command()
@@ -278,6 +291,28 @@ def set_section(
         left_cols=lc, split_col=split_col, scale=scale, output=output,
     )
     typer.echo(f"枠付きセクションを作成しました: {dest}")
+
+
+@app.command(name="export-pdf")
+def export_pdf_cmd(
+    target: str = typer.Argument(..., help="Google スプレッドシート URL または ID"),
+    sheet: list[str] = typer.Option(..., "--sheet", help="対象シート名（複数指定可: --sheet A --sheet B）"),
+    out_dir: str = typer.Option("/tmp", "--out-dir", "-o", help="出力ディレクトリ（既定 /tmp）"),
+    png: bool = typer.Option(False, "--png", help="PDF を PNG にも変換（sips・Read 目視用）"),
+    landscape: bool = typer.Option(False, "--landscape", help="横向きで書き出す（既定は縦向き）"),
+) -> None:
+    """スプシの指定シートを PDF（任意で PNG）に書き出す（レンダリング目視用・アドホック python 不要）。"""
+    from gwex.export_pdf import export_pdf as _export_pdf
+
+    results = _export_pdf(target, list(sheet), out_dir, png=png, portrait=not landscape)
+    for r in results:
+        if r.get("error"):
+            typer.echo(f"[NG] {r['sheet']}: {r['error']}")
+        else:
+            line = f"PDF: {r['pdf']} ({r['bytes']} bytes)"
+            if r.get("png"):
+                line += f" / PNG: {r['png']}"
+            typer.echo(f"[OK] {r['sheet']} -> {line}")
 
 
 def main() -> None:
