@@ -17,7 +17,8 @@ from pydantic import BaseModel, Field
 
 
 class Case(BaseModel):
-    test_no: Union[int, str]
+    # test_no 専用列を持たないテンプレもあるため Optional（既定 None）。
+    test_no: Optional[Union[int, str]] = None
     verification_content: str
     execution_steps: list[str] = Field(default_factory=list)
     # 抽出時に元シートの行番号(1始まり)を付与。生成・書込時は None（更新先の特定に使う）。
@@ -110,13 +111,13 @@ class MappingConfig(BaseModel):
 DEFAULT_MAPPING = MappingConfig(
     header_row=7,
     data_start_row=10,
+    # 実テンプレは test_no 専用列を持たず、H=確認内容 / I=実施手順。
     columns={
-        "screen_name": "C",
-        "medium_category": "E",
-        "small_category": "G",
-        "test_no": "H",
-        "verification_content": "I",
-        "execution_steps": "J",
+        "screen_name": "C",        # B=大項目No, C=大項目名
+        "medium_category": "E",    # D=中項目No, E=中項目名
+        "small_category": "G",     # F=小項目No, G=小項目名
+        "verification_content": "H",
+        "execution_steps": "I",
     },
     # 画面/中項目/小項目の No 列（値列の左隣）。整形時に親番号を採番・縦結合する。
     number_columns={

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from gwex import parser_entry, sandbox
 from gwex.fetcher import local
@@ -102,6 +103,7 @@ def write_testspec(
     append: bool = False,
     dedup: bool = False,
     apply_format: bool = False,
+    clear_rows: Optional[int] = None,
     output=None,
 ) -> str:
     """TestSpec(JSON) を target（ローカル .xlsx / Google URL）のシートに展開記入する。
@@ -129,6 +131,17 @@ def write_testspec(
     start_row = None
     if append:
         start_row = _last_data_row(target, sheet, mapping, is_google) + 1
+
+    if clear_rows and not is_google and not append:
+        from gwex.writer import xlsx_rows
+
+        cfg0 = mapping or DEFAULT_MAPPING
+        target = xlsx_rows.clear_data_region(
+            target, sheet, cfg0.data_start_row, clear_rows,
+            left_col=cfg0.box_left_col or "A", right_col=cfg0.box_right_col or "Z",
+            output=output,
+        )
+        output = None  # クリア結果を target に取り込んだので以降は in-place
 
     asgn = testspec_writer.assignments(spec, mapping, start_row=start_row)
     if is_google:

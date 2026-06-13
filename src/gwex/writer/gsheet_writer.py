@@ -112,9 +112,12 @@ def set_cell_image(
             "GWEX_APPSCRIPT_URL が未設定です。appscript/gwex_image.gs を Web アプリとして"
             "デプロイし、その URL を環境変数に設定してください。"
         )
-    from gwex.writer._image import downscale
+    from gwex.writer._image import downscale, fit_pixels
 
+    # キャプチャ画像そのものを使い、寸法だけ縮小する。
+    # Apps Script は 100万画素・2MB 上限のため、max_dim 指定後も画素上限を必ず満たす。
     src = downscale(image_path, max_dim)
+    src = fit_pixels(src)
     mime = mimetypes.guess_type(src)[0] or "image/png"
     with open(src, "rb") as f:
         data_url = f"data:{mime};base64," + base64.b64encode(f.read()).decode("ascii")

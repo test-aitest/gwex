@@ -56,14 +56,35 @@ def format_testspec_block(
 
     r0, r1 = layout["data_first_row"], layout["data_last_row"]
     left, right = _box_cols(cfg)
-    ref_row = r0 - 1  # 直上の既存行（スタイル複製元）
+
+    # スタイル複製元の選定: 直上の既存行を使うが、それがヘッダ（塗りつぶしあり）の場合は
+    # データ行の体裁を引きずってしまう（M8/M11: データセルは塗りなし・left/top/wrap が正）。
+    # 3段ヘッダ直後にデータが始まるテンプレでは r0-1 がヘッダ行になるため、
+    # ヘッダを掴んだら複製せず、テンプレ標準のデータセル体裁を明示適用する。
+    from openpyxl.styles import Alignment, PatternFill
+
+    ref_row = r0 - 1
+    ref_is_header = any(
+        ws.cell(row=ref_row, column=c).fill.patternType for c in range(left, right + 1)
+    )
+    no_fill = PatternFill(fill_type=None)
+    data_align = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
     for r in range(r0, r1 + 1):
         for c in range(left, right + 1):
             cell = ws.cell(row=r, column=c)
             cell.border = box
             ref = ws.cell(row=ref_row, column=c)
-            if ref.has_style:
+            if ref_is_header:
+                # データセル標準体裁（塗りなし・太字なし・left/top/wrap）を明示適用
+                if ref.has_style:
+                    f = copy.copy(ref.font)
+                    f.bold = False
+                    cell.font = f
+                    cell.number_format = ref.number_format
+                cell.alignment = copy.copy(data_align)
+                cell.fill = copy.copy(no_fill)
+            elif ref.has_style:
                 cell.font = copy.copy(ref.font)
                 cell.alignment = copy.copy(ref.alignment)
                 cell.number_format = ref.number_format

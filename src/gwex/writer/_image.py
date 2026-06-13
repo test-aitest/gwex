@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import tempfile
 from typing import Optional
@@ -34,6 +35,29 @@ def downscale(image_path: str, max_dim: Optional[int]) -> str:
         if resized.mode in ("RGBA", "P") and suffix.lower() in (".jpg", ".jpeg"):
             resized = resized.convert("RGB")
         # PNG は無損失・最適圧縮で保存（品質劣化なし）
+        save_kwargs = {"optimize": True} if suffix.lower() == ".png" else {}
+        resized.save(out, **save_kwargs)
+        return out
+
+
+def fit_pixels(image_path: str, max_pixels: int = 950_000) -> str:
+    """総画素数が max_pixels を超える場合のみ、縦横比を保ったまま寸法だけ縮小する。
+
+    キャプチャ画像そのものを使い「サイズだけ変える」用途（Google Sheets セル内画像の
+    Apps Script 制限=100万画素・2MB 対策）。上限内なら元パスをそのまま返す。
+    """
+    with Image.open(image_path) as im:
+        w, h = im.size
+        if w * h <= max_pixels:
+            return image_path
+        scale = math.sqrt(max_pixels / (w * h))
+        resized = im.resize(
+            (max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS
+        )
+        suffix = os.path.splitext(image_path)[1] or ".png"
+        out = tempfile.mktemp(suffix=suffix)
+        if resized.mode in ("RGBA", "P") and suffix.lower() in (".jpg", ".jpeg"):
+            resized = resized.convert("RGB")
         save_kwargs = {"optimize": True} if suffix.lower() == ".png" else {}
         resized.save(out, **save_kwargs)
         return out

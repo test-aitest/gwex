@@ -87,12 +87,13 @@ def write_testspec(
     append: bool = typer.Option(False, "--append", help="既存データの下に追記（採番は既存グループ最大Noから継続）"),
     dedup: bool = typer.Option(False, "--dedup", help="既存と完全一致するケースを除外（冪等）"),
     fmt: bool = typer.Option(False, "--format", help="追記ブロックに既存体裁（罫線/縦結合/親番号）を後付け（.xlsx）"),
+    clear_rows: Optional[int] = typer.Option(None, "--clear-rows", help="記入前にデータ開始行から N 行ぶんの領域（box列）を更地化（テンプレのサンプル結合/プレースホルダ除去）"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
 ) -> None:
     cfg = core.load_mapping(mapping) if mapping else None
     with open(json_path, encoding="utf-8") as f:
         spec_json = f.read()
-    dest = core.write_testspec(spec_json, target, sheet, cfg, append=append, dedup=dedup, apply_format=fmt, output=output)
+    dest = core.write_testspec(spec_json, target, sheet, cfg, append=append, dedup=dedup, apply_format=fmt, clear_rows=clear_rows, output=output)
     typer.echo(f"テスト仕様を書き込みました: {dest}")
 
 
@@ -109,6 +110,111 @@ def update_case(
     step_list = [s for s in steps.split("\n") if s.strip()]
     dest = core.update_case(target, sheet, row, verification, step_list, cfg)
     typer.echo(f"ケースを更新しました（行 {row}）: {dest}")
+
+
+@app.command(name="strip-instruction-row")
+def strip_instruction_row(
+    target: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    sheet: Optional[str] = typer.Option(None, "--sheet", help="対象シート名（省略時は指示行 {A$1}… を持つ全シートを自動処理）"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
+) -> None:
+    """テンプレ複製用: 行1（指示行）を削除し、結合/行高/条件付き書式/dv を -1 行シフトする。"""
+    from gwex.writer import xlsx_rows
+
+    dest, done = xlsx_rows.delete_instruction_row(target, sheet, output=output)
+    typer.echo(f"指示行を削除しました（{', '.join(done) or '対象なし'}）: {dest}")
+
+
+@app.command(name="delete-rows")
+def delete_rows(
+    target: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    sheet: str = typer.Option(..., "--sheet", help="対象シート名"),
+    start: int = typer.Option(..., "--start", help="削除開始行（1始まり）"),
+    count: int = typer.Option(..., "--count", help="削除行数"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
+) -> None:
+    """指定シートの行を削除し、結合/行高/条件付き書式/dv をシフトする（未使用サンプル行・ブロック削除用）。"""
+    from gwex.writer import xlsx_rows
+
+    dest = xlsx_rows.delete_rows(target, sheet, start, count, output=output)
+    typer.echo(f"行を削除しました（{start} から {count} 行）: {dest}")
+
+
+@app.command(name="lint")
+def lint(
+    target: str = typer.Argument(..., help="走査する .xlsx"),
+    sheet: Optional[list[str]] = typer.Option(None, "--sheet", help="対象シート（複数可。省略時は全シート）"),
+    ignore: Optional[list[str]] = typer.Option(None, "--ignore", help="除外語（複数可）"),
+    to: str = typer.Option("summary", "--to", help="出力: summary | json"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先ファイル（省略時は標準出力）"),
+) -> None:
+    """記入し残し（プレースホルダ/サンプル/指示文）を機械検出する。完成前の必須ゲート（ERROR 0 が条件）。"""
+    import json as _json
+
+    from gwex.domains import doc_lint
+
+    result = doc_lint.lint(target, sheets=list(sheet) if sheet else None,
+                           extra_ignore=list(ignore) if ignore else None)
+    text = _json.dumps(result, ensure_ascii=False, indent=1) if to == "json" else doc_lint.summarize(result)
+    if output:
+        with open(output, "w", encoding="utf-8") as f:
+            f.write(text)
+        typer.echo(f"書き出しました: {output}（ERROR {len(result['errors'])} / WARN {len(result['warnings'])}）")
+    else:
+        typer.echo(text)
+    if result["errors"]:
+        raise typer.Exit(code=1)
+
+
+@app.command(name="diff")
+def diff(
+    a: str = typer.Argument(..., help="比較元 .xlsx（自作）"),
+    b: str = typer.Argument(..., help="比較先 .xlsx（answer 等）"),
+    sheet: Optional[str] = typer.Option(None, "--sheet", help="対象シート（省略時は共通シート全て）"),
+    to: str = typer.Option("summary", "--to", help="出力: summary | json"),
+    max_row: Optional[int] = typer.Option(None, "--max-row", help="比較する最大行（省略時は両者の最大行）"),
+    max_col: Optional[int] = typer.Option(None, "--max-col", help="比較する最大列（省略時は両者の最大列）"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先ファイル（省略時は標準出力）"),
+) -> None:
+    """2つの .xlsx を5観点（値/整列/結合/画像数/行高）で比較する（anken-verify 手順1）。"""
+    import json as _json
+
+    from gwex.domains import xlsx_compare
+
+    result = xlsx_compare.compare(a, b, sheet=sheet, max_row=max_row, max_col=max_col)
+    text = _json.dumps(result, ensure_ascii=False, indent=1) if to == "json" else xlsx_compare.summarize(result)
+    if output:
+        with open(output, "w", encoding="utf-8") as f:
+            f.write(text)
+        typer.echo(f"書き出しました: {output}")
+    else:
+        typer.echo(text)
+
+
+@app.command(name="clear-images")
+def clear_images(
+    target: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    sheet: str = typer.Option(..., "--sheet", help="対象シート名"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
+) -> None:
+    """シートの埋め込み画像を全削除する（set-image の逆。スプシ変換前の画像なし版作成用）。"""
+    from gwex.writer import xlsx_rows
+
+    dest, n = xlsx_rows.clear_images(target, sheet, output=output)
+    typer.echo(f"画像を {n} 件削除しました: {dest}")
+
+
+@app.command(name="extract-sheet")
+def extract_sheet(
+    target: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    sheet: str = typer.Option(..., "--sheet", help="残すシート名"),
+    output: str = typer.Option(..., "--output", "-o", help="出力先 .xlsx"),
+) -> None:
+    """対象シートだけの .xlsx を書き出す（qlmanage は先頭シートしか描画しないため、2枚目以降の Quick Look 目視用）。"""
+    from gwex.writer import xlsx_rows
+
+    dest = xlsx_rows.extract_sheet(target, sheet, output)
+    typer.echo(f"書き出しました: {dest}")
 
 
 @app.command(name="set-text")
