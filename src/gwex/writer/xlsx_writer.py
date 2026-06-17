@@ -39,6 +39,42 @@ def set_cell_text(
     return dest
 
 
+def set_row_height(
+    path: str, sheet: str, row: int, height: float, *, output: Optional[str] = None
+) -> str:
+    """指定行の行高を設定する。"""
+    wb = load_workbook(path)
+    ws = wb[sheet]
+    ws.row_dimensions[row].height = height
+    dest = output or path
+    wb.save(dest)
+    return dest
+
+
+def set_merge_cells(
+    path: str, sheet: str, ranges: list[str], *, output: Optional[str] = None
+) -> str:
+    """指定セル範囲を結合する（オーバーラップする既存結合を全て解除してから再結合）。"""
+    from openpyxl.utils.cell import range_boundaries
+
+    wb = load_workbook(path)
+    ws = wb[sheet]
+    for rng in ranges:
+        min_c, min_r, max_c, max_r = range_boundaries(rng)
+        # オーバーラップする既存結合を全て解除
+        overlapping = [
+            r for r in list(ws.merged_cells.ranges)
+            if not (r.max_col < min_c or r.min_col > max_c or
+                    r.max_row < min_r or r.min_row > max_r)
+        ]
+        for r in overlapping:
+            ws.unmerge_cells(str(r))
+        ws.merge_cells(rng)
+    dest = output or path
+    wb.save(dest)
+    return dest
+
+
 def write_cells(
     path: str, sheet: str, assignments: list[tuple[str, object]], *, output: Optional[str] = None
 ) -> str:

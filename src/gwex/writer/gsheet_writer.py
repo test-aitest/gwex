@@ -84,6 +84,73 @@ def last_data_row(target: str, sheet: str, mapping: Optional[MappingConfig] = No
     return last
 
 
+def _get_sheet_id(svc, sid: str, sheet: str) -> int:
+    """シート名からシートIDを取得する。"""
+    meta = svc.spreadsheets().get(spreadsheetId=sid).execute()
+    for s in meta["sheets"]:
+        if s["properties"]["title"] == sheet:
+            return s["properties"]["sheetId"]
+    raise ValueError(f"シートが見つかりません: {sheet}")
+
+
+def set_row_height(target: str, sheet: str, row: int, height_pt: float) -> str:
+    """指定行の高さを設定する（Excel pt 単位 → Sheets API pixel 変換）。
+
+    row: 1始まりの行番号。
+    height_pt: Excel ポイント単位の行高（例: 66.75）。
+               Sheets API は pixel 単位で受け取る（1pt × 96/72 = 1.333...px）。
+    """
+    svc, _ = _service()
+    sid = _spreadsheet_id(target)
+    sheet_id = _get_sheet_id(svc, sid, sheet)
+    height_px = max(1, round(height_pt * 96 / 72))
+    svc.spreadsheets().batchUpdate(
+        spreadsheetId=sid,
+        body={
+            "requests": [{
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": row - 1,  # 0-indexed
+                        "endIndex": row,
+                    },
+                    "properties": {"pixelSize": height_px},
+                    "fields": "pixelSize",
+                }
+            }]
+        },
+    ).execute()
+    return target
+
+
+def autofit_rows(target: str, sheet: str, start_row: int, end_row: int) -> str:
+    """行高をコンテンツに合わせて自動調整する（Sheets API AutoResizeDimensionsRequest）。
+
+    start_row, end_row: 1始まり、end_row は含む（inclusive）。
+    セルの wrap_text が True の行は折り返し後のテキスト全体が見えるよう自動フィットされる。
+    """
+    svc, _ = _service()
+    sid = _spreadsheet_id(target)
+    sheet_id = _get_sheet_id(svc, sid, sheet)
+    svc.spreadsheets().batchUpdate(
+        spreadsheetId=sid,
+        body={
+            "requests": [{
+                "autoResizeDimensions": {
+                    "dimensions": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": start_row - 1,  # 0-indexed (inclusive)
+                        "endIndex": end_row,           # 0-indexed (exclusive) = end_row (1-based inclusive)
+                    }
+                }
+            }]
+        },
+    ).execute()
+    return target
+
+
 def set_cell_image(
     target: str,
     sheet: str,

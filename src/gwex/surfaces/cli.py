@@ -101,12 +101,13 @@ def write_testspec(
     dedup: bool = typer.Option(False, "--dedup", help="既存と完全一致するケースを除外（冪等）"),
     fmt: bool = typer.Option(False, "--format", help="追記ブロックに既存体裁（罫線/縦結合/親番号）を後付け（.xlsx）"),
     clear_rows: Optional[int] = typer.Option(None, "--clear-rows", help="記入前にデータ開始行から N 行ぶんの領域（box列）を更地化（テンプレのサンプル結合/プレースホルダ除去）"),
+    start_row: Optional[int] = typer.Option(None, "--start-row", help="データ書き込みを開始する行番号（省略時は mapping の data_start_row=10）"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
 ) -> None:
     cfg = core.load_mapping(mapping) if mapping else None
     with open(json_path, encoding="utf-8") as f:
         spec_json = f.read()
-    dest = core.write_testspec(spec_json, target, sheet, cfg, append=append, dedup=dedup, apply_format=fmt, clear_rows=clear_rows, output=output)
+    dest = core.write_testspec(spec_json, target, sheet, cfg, append=append, dedup=dedup, apply_format=fmt, clear_rows=clear_rows, start_row=start_row, output=output)
     typer.echo(f"テスト仕様を書き込みました: {dest}")
 
 
@@ -136,6 +137,41 @@ def strip_instruction_row(
 
     dest, done = xlsx_rows.delete_instruction_row(target, sheet, output=output)
     typer.echo(f"指示行を削除しました（{', '.join(done) or '対象なし'}）: {dest}")
+
+
+@app.command(name="copy-row-format")
+def copy_row_format(
+    src: str = typer.Argument(..., help="書式コピー元 .xlsx パス"),
+    dst: str = typer.Argument(..., help="書式コピー先 .xlsx パス"),
+    src_sheet: str = typer.Option(..., "--src-sheet", help="コピー元シート名"),
+    dst_sheet: str = typer.Option(..., "--dst-sheet", help="コピー先シート名"),
+    src_rows: str = typer.Option(..., "--src-rows", help="コピー元行番号（カンマ区切り。例: 6,7,8,9,10）"),
+    dst_rows: str = typer.Option(..., "--dst-rows", help="コピー先行番号（カンマ区切り。例: 6,7,8,9,10）"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place で dst を上書き）"),
+) -> None:
+    """ソース xlsx の指定行の書式（行高・セル書式）をターゲット xlsx の指定行にコピーする（値はコピーしない）。"""
+    from gwex.writer import xlsx_rows
+
+    s_rows = [int(r.strip()) for r in src_rows.split(",")]
+    d_rows = [int(r.strip()) for r in dst_rows.split(",")]
+    dest = xlsx_rows.copy_row_format(src, src_sheet, s_rows, dst, dst_sheet, d_rows, output=output)
+    typer.echo(f"行書式をコピーしました: {dest}")
+
+
+@app.command(name="insert-rows")
+def insert_rows_cmd(
+    target: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    sheet: str = typer.Option(..., "--sheet", help="対象シート名"),
+    at: int = typer.Option(..., "--at", help="挿入位置（この行の直前に挿入。1始まり）"),
+    count: int = typer.Option(1, "--count", help="挿入行数（既定1）"),
+    template_row: Optional[int] = typer.Option(None, "--template-row", help="書式コピー元の行番号（セル書式・行高をコピー）"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
+) -> None:
+    """指定位置に行を挿入し、結合/行高/条件付き書式/dv をシフトする（修正内容の依頼行追加用）。"""
+    from gwex.writer import xlsx_rows
+
+    dest = xlsx_rows.insert_rows(target, sheet, at, count, template_row=template_row, output=output)
+    typer.echo(f"行を挿入しました（{at} の直前に {count} 行）: {dest}")
 
 
 @app.command(name="delete-rows")
@@ -236,11 +272,12 @@ def set_text(
     sheet: str = typer.Option(..., "--sheet", help="対象シート名"),
     cell: str = typer.Option(..., "--cell", help="セル（例: B2）"),
     text: str = typer.Option(..., "--text", help="書き込むテキスト"),
+    value_type: Optional[str] = typer.Option(None, "--type", help="値の型: int | float（省略時は文字列）"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（xlsx のみ・既定 in-place）"),
 ) -> None:
     from gwex.writer import base
 
-    dest = base.set_cell_text(target, sheet, cell, text, output=output)
+    dest = base.set_cell_text(target, sheet, cell, text, value_type=value_type, output=output)
     typer.echo(f"書き込みました: {dest}")
 
 
@@ -279,18 +316,85 @@ def set_section(
     left_cols: str = typer.Option("C,L", "--cols", help="セクション左右端の列（既定 C,L）"),
     split_col: str = typer.Option("H", "--split", help="修正後の開始列（既定 H）"),
     scale: float = typer.Option(0.8, "--scale", help="画像を枠の何倍にするか（既定0.8＝80%・中央）"),
+    n_rows: Optional[int] = typer.Option(None, "--n-rows", help="画像エリアの行数を固定（省略時は画像比率から自動計算）"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（xlsx のみ・既定 in-place）"),
 ) -> None:
     """枠付き before/after セクションを作成して画像を配置する（Excel / Google 両対応）。
 
     見出し＋修正前/修正後ラベル＋青背景＋箱罫線、画像は枠の scale(80%)・比率維持・中央配置。
+    --n-rows で行数を固定すると複数ブロックで行数を統一できる。
+    --before/--after 両方省略時は枠のみ作成（画像なし・n-rows 省略時は34行）。
     """
     lc = tuple(left_cols.split(","))
     dest = core.create_section(
         target, sheet, top_row, title, before, after,
-        left_cols=lc, split_col=split_col, scale=scale, output=output,
+        left_cols=lc, split_col=split_col, scale=scale, n_rows=n_rows, output=output,
     )
     typer.echo(f"枠付きセクションを作成しました: {dest}")
+
+
+@app.command(name="set-row-height")
+def set_row_height_cmd(
+    xlsx: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    sheet: str = typer.Option(..., "--sheet", help="対象シート名"),
+    row: int = typer.Option(..., "--row", help="行番号（1始まり）"),
+    height: float = typer.Option(..., "--height", help="行高（pt）"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
+) -> None:
+    """指定行の行高を設定する（xlsx のみ対応）。"""
+    from gwex.writer import base
+
+    dest = base.set_row_height(xlsx, sheet, row, height, output=output)
+    typer.echo(f"行高を設定しました: {dest}")
+
+
+@app.command(name="set-alignment")
+def set_alignment_cmd(
+    xlsx: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    sheet: str = typer.Option(..., "--sheet", help="対象シート名"),
+    cells: list[str] = typer.Option(..., "--cell", help="対象セルまたは範囲（例: C6 / C6:C11）。複数指定可"),
+    horizontal: Optional[str] = typer.Option(None, "--horizontal", help="水平位置（left/center/right）"),
+    vertical: Optional[str] = typer.Option(None, "--vertical", help="垂直位置（top/center/bottom）"),
+    wrap_text: Optional[bool] = typer.Option(None, "--wrap-text", help="折り返し（true/false）"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
+) -> None:
+    """指定セルのアライメントを部分的に上書きする（未指定の属性は現状維持）。xlsx のみ対応。"""
+    from gwex.writer import xlsx_rows
+
+    dest = xlsx_rows.set_alignment(xlsx, sheet, list(cells), horizontal=horizontal, vertical=vertical, wrap_text=wrap_text, output=output)
+    typer.echo(f"アライメントを設定しました: {dest}")
+
+
+@app.command(name="set-merge")
+def set_merge(
+    xlsx: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    sheet: str = typer.Option(..., "--sheet", help="対象シート名"),
+    merge_range: list[str] = typer.Option(..., "--range", help="結合範囲（例: B9:B15）。複数指定可"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
+) -> None:
+    """セル範囲を結合する（既存結合は事前解除してから再結合）。xlsx のみ対応。"""
+    from gwex.writer import base
+
+    dest = base.set_merge_cells(xlsx, sheet, list(merge_range), output=output)
+    typer.echo(f"結合しました: {dest}")
+
+
+@app.command(name="autofit-rows")
+def autofit_rows_cmd(
+    target: str = typer.Argument(..., help="Google スプレッドシート URL"),
+    sheet: str = typer.Option(..., "--sheet", help="対象シート名"),
+    start_row: int = typer.Option(..., "--start-row", help="開始行（1始まり）"),
+    end_row: int = typer.Option(..., "--end-row", help="終了行（1始まり・含む）"),
+) -> None:
+    """Google スプシの行高をコンテンツに合わせて自動調整する（AutoResizeDimensionsRequest）。
+
+    セルの折り返し（wrap_text）が True の行はテキスト全体が見えるよう自動フィットされる。
+    xlsx は Excel がファイルを開くときに customHeight=False の行を自動フィットするので本コマンドは不要。
+    """
+    from gwex.writer import base
+
+    dest = base.autofit_rows(target, sheet, start_row, end_row)
+    typer.echo(f"自動調整しました (row {start_row}〜{end_row}): {dest}")
 
 
 @app.command(name="export-pdf")

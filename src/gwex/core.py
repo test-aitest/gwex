@@ -104,6 +104,7 @@ def write_testspec(
     dedup: bool = False,
     apply_format: bool = False,
     clear_rows: Optional[int] = None,
+    start_row: Optional[int] = None,
     output=None,
 ) -> str:
     """TestSpec(JSON) を target（ローカル .xlsx / Google URL）のシートに展開記入する。
@@ -128,22 +129,23 @@ def write_testspec(
     if existing is not None and (dedup or append):
         spec = _prepare_spec(spec, existing, mapping, drop_dups=dedup)
 
-    start_row = None
+    _start_row = start_row  # 明示指定を最優先
     if append:
-        start_row = _last_data_row(target, sheet, mapping, is_google) + 1
+        _start_row = _last_data_row(target, sheet, mapping, is_google) + 1
 
     if clear_rows and not is_google and not append:
         from gwex.writer import xlsx_rows
 
         cfg0 = mapping or DEFAULT_MAPPING
+        clear_from = _start_row if _start_row is not None else cfg0.data_start_row
         target = xlsx_rows.clear_data_region(
-            target, sheet, cfg0.data_start_row, clear_rows,
+            target, sheet, clear_from, clear_rows,
             left_col=cfg0.box_left_col or "A", right_col=cfg0.box_right_col or "Z",
             output=output,
         )
         output = None  # クリア結果を target に取り込んだので以降は in-place
 
-    asgn = testspec_writer.assignments(spec, mapping, start_row=start_row)
+    asgn = testspec_writer.assignments(spec, mapping, start_row=_start_row)
     if is_google:
         from gwex.writer import gsheet_writer
 
@@ -159,7 +161,7 @@ def write_testspec(
         screen_start_no = (_max_screen_no(target, sheet, cfg) + 1) if existing is not None else 1
         plan = testspec_writer.layout(
             spec, cfg,
-            start_row=(start_row if start_row is not None else cfg.data_start_row),
+            start_row=(_start_row if _start_row is not None else cfg.data_start_row),
             screen_start_no=screen_start_no,
         )
         xlsx_format.format_testspec_block(dest, sheet, plan, cfg)
@@ -177,6 +179,7 @@ def create_section(
     left_cols=("C", "L"),
     split_col: str = "H",
     scale: float = 0.8,
+    n_rows=None,
     output=None,
 ) -> str:
     """before/after セクション（枠/青背景/中央/画像80%中央）を作る。target で Excel/Google 振り分け。"""
@@ -193,7 +196,7 @@ def create_section(
 
     return xlsx_format.create_before_after_section(
         target, sheet, top_row, title, before_image, after_image,
-        left_cols=left_cols, split_col=split_col, output=output,
+        left_cols=left_cols, split_col=split_col, n_rows=n_rows, output=output,
     )
 
 

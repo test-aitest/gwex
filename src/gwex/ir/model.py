@@ -69,6 +69,18 @@ class FetchedRef(BaseModel):
 ImageRef = Annotated[Union[UrlRef, FetchedRef], Field(discriminator="kind")]
 
 
+class MediaItem(BaseModel):
+    """取得済みバイナリ（画像など）の実体。
+
+    `Image(src=FetchedRef(id=...))` から id 参照される。bytes は base64 文字列で
+    持ち、sandbox の別プロセス境界（Document の JSON 化）を越えて運べるようにする。
+    """
+
+    id: int
+    mime: str
+    data_b64: str
+
+
 # --------------------------------------------------------------------------
 # Block（文書構造）
 # --------------------------------------------------------------------------
@@ -149,6 +161,8 @@ class Document(BaseModel):
     title: Optional[str] = None
     source: SourceKind
     blocks: list[Block]
+    # 取得済みバイナリ（画像等）の実体。Image(FetchedRef(id)) から id 参照される。
+    media: list[MediaItem] = Field(default_factory=list)
 
 
 # 前方参照（list[Inline] / list[Block] 等）を解決する。

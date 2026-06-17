@@ -27,6 +27,7 @@ from gwex.ir.model import (
     UrlRef,
     FetchedRef,
     ImageRef,
+    MediaItem,
 )
 
 __all__ = [
@@ -50,4 +51,5 @@ __all__ = [
     "ImageRef",
     "UrlRef",
     "FetchedRef",
+    "MediaItem",
 ]

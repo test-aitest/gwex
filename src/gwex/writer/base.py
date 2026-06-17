@@ -23,11 +23,18 @@ def _backend(target: str):
     return xlsx_writer, False
 
 
-def set_cell_text(target: str, sheet: str, cell: str, text: str, *, output: Optional[str] = None) -> str:
+def set_cell_text(target: str, sheet: str, cell: str, text: str,
+                  *, value_type: Optional[str] = None, output: Optional[str] = None) -> str:
+    """セルにテキストを書き込む。value_type='int' を指定すると整数として書き込む。"""
     backend, is_google = _backend(target)
+    value: object = text
+    if value_type == "int":
+        value = int(text)
+    elif value_type == "float":
+        value = float(text)
     if is_google:
-        return backend.set_cell_text(target, sheet, cell, text)
-    return backend.set_cell_text(target, sheet, cell, text, output=output)
+        return backend.set_cell_text(target, sheet, cell, value)
+    return backend.set_cell_text(target, sheet, cell, value, output=output)
 
 
 def set_cell_image(
@@ -60,3 +67,34 @@ def set_cell_image(
         target, sheet, anchor, image_path,
         cell_range=cell_range, insert_rows=insert_rows, width=width, height=height, max_dim=max_dim, output=output,
     )
+
+
+def set_row_height(target: str, sheet: str, row: int, height: float, *, output: Optional[str] = None) -> str:
+    """行高を設定する（xlsx のみ対応）。"""
+    backend, is_google = _backend(target)
+    if is_google:
+        raise ValueError("set-row-height は xlsx のみ対応です。")
+    return backend.set_row_height(target, sheet, row, height, output=output)
+
+
+def set_merge_cells(target: str, sheet: str, ranges: list[str], *, output: Optional[str] = None) -> str:
+    """セル範囲を結合する（xlsx のみ対応）。"""
+    backend, is_google = _backend(target)
+    if is_google:
+        raise ValueError("set-merge は xlsx のみ対応です（Google スプシは未対応）。")
+    return backend.set_merge_cells(target, sheet, ranges, output=output)
+
+
+def autofit_rows(target: str, sheet: str, start_row: int, end_row: int) -> str:
+    """行高をコンテンツに合わせて自動調整する（Google スプシのみ対応）。
+
+    xlsx は Excel がファイルを開くときに customHeight=False の行を自動フィットする。
+    Google スプシは AutoResizeDimensionsRequest API を呼び出す。
+    """
+    backend, is_google = _backend(target)
+    if not is_google:
+        raise ValueError(
+            "autofit-rows は Google スプレッドシートのみ対応です。"
+            "xlsx は Excel が開いたときに customHeight=False の行を自動フィットします。"
+        )
+    return backend.autofit_rows(target, sheet, start_row, end_row)

@@ -96,6 +96,10 @@ def format_testspec_block(
     for ref in layout["merges"]:
         ws.merge_cells(ref)
 
+    # データ行の customHeight を解除 → Excel がファイルを開くとき wrap_text に合わせて自動フィット
+    for r in range(r0, r1 + 1):
+        ws.row_dimensions[r].height = None  # customHeight=False になる
+
     dest = output or path
     wb.save(dest)
     return dest
@@ -122,16 +126,17 @@ def create_before_after_section(
     row_height_pt: float = _DEFAULT_ROW_PT,
     header_fill: str = "FF9CC2E5",                  # 見出し塗り（既存テンプレ色, ARGB）
     area_fill: str = "FFDEEAF6",                    # ラベル/画像エリア塗り（薄い青, ARGB）
+    n_rows: Optional[int] = None,                   # 画像エリアの行数を固定（Noneの場合は画像比率から自動計算）
     output: Optional[str] = None,
 ) -> str:
     """既存テンプレ準拠の「見出し＋修正前/修正後＋箱罫線」セクション。
 
     画像は **横幅=各カラム群の幅で固定**し、**縦は画像の自然高さに収まるだけ行を確保**する
-    （空行で間延びさせない）。罫線/結合/ラベルは openpyxl、画像は xlsx_zip で最後に oneCellAnchor
+    （空行で間延びさせない）。n_rows を指定すると行数を固定できる（複数ブロックで統一したい場合）。
+    before_image/after_image 両方 None の場合は枠のみ作成（画像なし）。
+    罫線/結合/ラベルは openpyxl、画像は xlsx_zip で最後に oneCellAnchor
     配置（ext を確定させ、以後の openpyxl 保存でのサイズリセットを避ける）。
     """
-    from PIL import Image as PILImage
-
     from gwex.writer import xlsx_zip
 
     lc = column_index_from_string(left_cols[0])
@@ -149,18 +154,25 @@ def create_before_after_section(
     fill_head = PatternFill(fgColor=header_fill, fill_type="solid")
     fill_area = PatternFill(fgColor=area_fill, fill_type="solid")
 
-    # 箱（カラム群）の基準幅。修正前/修正後の狭い方に合わせ、両画像を同寸にする
-    # （比率を必ず維持しつつ、左右で高さを揃える）。箱アスペクト=画像アスペクト。
-    ref_img = before_image or after_image
-    iw, ih = PILImage.open(ref_img).size
     w_before = sum(_col_px(ws, c) for c in range(lc, sc))
     w_after = sum(_col_px(ws, c) for c in range(sc, rc + 1))
     box_w = min(w_before, w_after)
-    box_h = int(box_w * ih / iw)                          # 箱の高さ（画像比率）
     row_px = max(1, int(round(row_height_pt * 96 / 72)))
-    n_rows = max(1, round(box_h / row_px))
-    per_row_pt = (box_h / n_rows) * 72 / 96               # 合計 = box_h px
-    r_bottom = r_img + n_rows - 1
+
+    ref_img = before_image or after_image
+    if ref_img is not None:
+        from PIL import Image as PILImage
+        iw, ih = PILImage.open(ref_img).size
+        box_h = int(box_w * ih / iw)                      # 箱の高さ（画像比率）
+        n_rows_val = n_rows if n_rows is not None else max(1, round(box_h / row_px))
+        per_row_pt = (box_h / n_rows_val) * 72 / 96       # 合計 = box_h px
+    else:
+        # 画像なし: 枠のみ作成。n_rows未指定なら34行デフォルト
+        n_rows_val = n_rows if n_rows is not None else 34
+        per_row_pt = row_height_pt
+        box_h = int(n_rows_val * row_px)
+
+    r_bottom = r_img + n_rows_val - 1
     for r in range(r_img, r_bottom + 1):
         ws.row_dimensions[r].height = per_row_pt
 
@@ -169,6 +181,19 @@ def create_before_after_section(
 
     thin = Side(style="thin")
     box = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # このセクションが占める行列範囲に重複する既存結合セルを先に解除する
+    from openpyxl.utils import get_column_letter
+    rows_span = range(top_row, r_bottom + 1)
+    cols_span = range(lc, rc + 1)
+    to_unmerge = [
+        str(m) for m in list(ws.merged_cells.ranges)
+        if any(m.min_row <= r <= m.max_row for r in rows_span)
+        and any(m.min_col <= c <= m.max_col for c in cols_span)
+    ]
+    for rng in to_unmerge:
+        ws.unmerge_cells(rng)
+
     ws.merge_cells(start_row=top_row, start_column=lc, end_row=top_row, end_column=rc)
     ws.cell(row=top_row, column=lc).value = title
     ws.cell(row=top_row, column=lc).alignment = center
