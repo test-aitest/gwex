@@ -39,7 +39,6 @@ from gwex.parsers._grids import collapse_empty
 
 logger = logging.getLogger(__name__)
 
-# DrawingML / package relationships の名前空間
 _NS_XDR = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
 _NS_A = "http://schemas.openxmlformats.org/drawingml/2006/main"
 _NS_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -75,20 +74,13 @@ def parse(data: bytes) -> Document:
                 for row in grid[1:]
             ]
             blocks.append(Table(header=header, rows=rows))
-        # このシートに紐づく画像をテーブルの後ろに付与
         if entries:
             blocks.extend(_sheet_images(entries, ws.title, media))
 
-    # どのシートにも関連付けできなかった画像は末尾にまとめて付与（取りこぼし防止）
     if entries:
         blocks.extend(_orphan_images(entries, media))
 
     return Document(title=None, source="xlsx", blocks=blocks, media=media.items)
-
-
-# --------------------------------------------------------------------------
-# テキスト（既存）
-# --------------------------------------------------------------------------
 
 
 def _used_grid(ws) -> list[list[Any]]:
@@ -126,11 +118,6 @@ def _fmt(value: Any) -> str:
     return str(value)
 
 
-# --------------------------------------------------------------------------
-# 画像
-# --------------------------------------------------------------------------
-
-
 def _zip_entries(data: bytes) -> dict[str, bytes]:
     """xlsx (zip) の全エントリを {名前: バイト} で返す。壊れていれば空 dict。"""
     try:
@@ -142,8 +129,6 @@ def _zip_entries(data: bytes) -> dict[str, bytes]:
 
 
 class _MediaCollector:
-    """MediaItem を id 採番・バイト dedup・サイズ上限つきで集約する。"""
-
     def __init__(self) -> None:
         self.items: list[MediaItem] = []
         self._by_hash: dict[str, int] = {}
@@ -151,7 +136,6 @@ class _MediaCollector:
         self._total = 0
 
     def add(self, raw: bytes, mime: str) -> Optional[int]:
-        """raw を登録して id を返す。重複は既存 id、上限超過は None。"""
         h = hashlib.sha1(raw).hexdigest()
         if h in self._by_hash:
             return self._by_hash[h]
@@ -293,7 +277,6 @@ def _pic_alt(pic: ET.Element) -> Optional[str]:
 
 
 def _orphan_images(entries: dict[str, bytes], media: _MediaCollector) -> list[Image]:
-    """どのシートにも関連付けできなかった xl/media/* を末尾に付与。"""
     out: list[Image] = []
     for key in sorted(entries):
         if not key.startswith("xl/media/"):

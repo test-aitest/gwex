@@ -38,7 +38,6 @@ def parse(data: bytes) -> Document:
 
 
 def _iter_block_items(docx):
-    """body 直下の段落・表を出現順に yield する。"""
     body = docx.element.body
     for child in body.iterchildren():
         if child.tag == qn("w:p"):

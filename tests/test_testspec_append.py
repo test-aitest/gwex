@@ -6,8 +6,23 @@ import openpyxl
 
 from gwex import core
 from gwex.domains import testspec
-from gwex.domains.model import Case, Group, Screen, TestSpec
+from gwex.domains.model import Case, Group, MappingConfig, Screen, TestSpec
 from gwex.domains.testspec_merge import diff
+
+# 採番継続・dedup を検証するためのマッピング（test_no 列ありの合成シート）。
+# 既定マッピングは実テンプレ固有なので、機能検証はここで明示する。
+MAPPING = MappingConfig(
+    header_row=7,
+    data_start_row=10,
+    columns={
+        "screen_name": "C",
+        "medium_category": "E",
+        "small_category": "G",
+        "test_no": "H",
+        "verification_content": "I",
+        "execution_steps": "J",
+    },
+)
 
 
 def _blank(tmp_path) -> str:
@@ -30,14 +45,14 @@ def _one(screen, medium, no, verification, steps):
 
 def _extract(path):
     with open(path, "rb") as f:
-        return testspec.extract(f.read(), "S")
+        return testspec.extract(f.read(), "S", MAPPING)
 
 
 def test_append_continues_numbering(tmp_path):
     p = _blank(tmp_path)
-    core.write_testspec(_one("画面A", "中X", 1, "確認1", ["①a"]).model_dump_json(), p, "S")
+    core.write_testspec(_one("画面A", "中X", 1, "確認1", ["①a"]).model_dump_json(), p, "S", mapping=MAPPING)
     # 同一グループへ append（test_no=99 は無視され既存最大+1=2 になる）
-    core.write_testspec(_one("画面A", "中X", 99, "確認2", ["①b"]).model_dump_json(), p, "S", append=True, dedup=True)
+    core.write_testspec(_one("画面A", "中X", 99, "確認2", ["①b"]).model_dump_json(), p, "S", mapping=MAPPING, append=True, dedup=True)
 
     g = _extract(p).screens[0].groups[0]
     assert [c.verification_content for c in g.cases] == ["確認1", "確認2"]
@@ -48,9 +63,9 @@ def test_append_continues_numbering(tmp_path):
 def test_dedup_idempotent(tmp_path):
     p = _blank(tmp_path)
     spec = _one("A", "X", 1, "確認1", ["①a"]).model_dump_json()
-    core.write_testspec(spec, p, "S")                      # seed
-    core.write_testspec(spec, p, "S", append=True, dedup=True)  # 同一 → 0件
-    core.write_testspec(spec, p, "S", append=True, dedup=True)  # 同一 → 0件
+    core.write_testspec(spec, p, "S", mapping=MAPPING)                      # seed
+    core.write_testspec(spec, p, "S", mapping=MAPPING, append=True, dedup=True)  # 同一 → 0件
+    core.write_testspec(spec, p, "S", mapping=MAPPING, append=True, dedup=True)  # 同一 → 0件
     total = sum(len(g.cases) for s in _extract(p).screens for g in s.groups)
     assert total == 1
 

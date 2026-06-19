@@ -5,8 +5,23 @@ from __future__ import annotations
 import openpyxl
 
 from gwex.domains import testspec, testspec_writer
-from gwex.domains.model import Case, Group, Screen, TestSpec
+from gwex.domains.model import Case, Group, MappingConfig, Screen, TestSpec
 from gwex.writer import xlsx_writer
+
+# 書き戻し→再抽出のラウンドトリップを検証するマッピング（test_no 列ありの合成シート）。
+# 既定マッピングは実テンプレ固有なので、機能検証はここで明示する。
+MAPPING = MappingConfig(
+    header_row=7,
+    data_start_row=10,
+    columns={
+        "screen_name": "C",
+        "medium_category": "E",
+        "small_category": "G",
+        "test_no": "H",
+        "verification_content": "I",
+        "execution_steps": "J",
+    },
+)
 
 
 def _spec() -> TestSpec:
@@ -39,11 +54,11 @@ def test_roundtrip(tmp_path):
     wb.active.title = "S"
     wb.save(p)
 
-    asgn = testspec_writer.assignments(spec)
+    asgn = testspec_writer.assignments(spec, MAPPING)
     xlsx_writer.write_cells(str(p), "S", asgn)
 
     with open(p, "rb") as f:
-        back = testspec.extract(f.read(), "S")
+        back = testspec.extract(f.read(), "S", MAPPING)
 
     assert [s.screen_name for s in back.screens] == ["画面A", "画面B"]
     a = back.screens[0]

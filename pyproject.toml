@@ -3,8 +3,10 @@ name = "gwex"
 version = "0.1.0"
 description = "Google Workspace + Microsoft documents → Markdown / typed JSON（取得と解析を分離し pure parser を confine）"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
-    { name = "矢部 竜季", email = "" }
+    { name = "矢部 竜季" }
 ]
 requires-python = ">=3.12"
 dependencies = [
@@ -19,6 +21,9 @@ dependencies = [
     "requests>=2.34.2",
     "typer>=0.26.4",
 ]
+
+[project.urls]
+Repository = "https://github.com/test-aitest/gwex"
 
 [project.scripts]
 gwex = "gwex.surfaces.cli:app"

@@ -11,10 +11,6 @@ from typing import Optional, Union
 from openpyxl.utils import column_index_from_string
 from pydantic import BaseModel, Field
 
-# --------------------------------------------------------------------------
-# 階層モデル
-# --------------------------------------------------------------------------
-
 
 class Case(BaseModel):
     # test_no 専用列を持たないテンプレもあるため Optional（既定 None）。
@@ -42,10 +38,6 @@ class TestSpec(BaseModel):
     sheet: str
     screens: list[Screen] = Field(default_factory=list)
 
-
-# --------------------------------------------------------------------------
-# 列マッピング設定
-# --------------------------------------------------------------------------
 
 ROLES = (
     "screen_name",

@@ -11,3 +11,10 @@ wheels/
 
 # secrets
 .env
+.env.*
+token.json
+client_secret*.json
+credentials.json
+*.pem
+*.key
+*.p12

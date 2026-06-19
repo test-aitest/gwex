@@ -7,6 +7,22 @@ from io import BytesIO
 import openpyxl
 
 from gwex.domains import testspec
+from gwex.domains.model import MappingConfig
+
+# 合成シート（C/E/G/H/I/J）に整合するマッピング。既定マッピングは実テンプレ固有
+# （test_no 列なし・H=確認内容）のため、抽出機能そのものはここで明示して検証する。
+MAPPING = MappingConfig(
+    header_row=7,
+    data_start_row=10,
+    columns={
+        "screen_name": "C",
+        "medium_category": "E",
+        "small_category": "G",
+        "test_no": "H",
+        "verification_content": "I",
+        "execution_steps": "J",
+    },
+)
 
 
 def _build() -> bytes:
@@ -34,7 +50,7 @@ def _build() -> bytes:
 
 
 def test_hierarchy_and_merge_fill():
-    spec = testspec.extract(_build(), "3.結合テスト項目")
+    spec = testspec.extract(_build(), "3.結合テスト項目", MAPPING)
     assert spec.sheet == "3.結合テスト項目"
     assert [s.screen_name for s in spec.screens] == ["画面A", "画面B"]
 
@@ -75,7 +91,7 @@ def test_small_category_resets_on_higher_level_change():
     buf = BytesIO()
     wb.save(buf)
 
-    spec = testspec.extract(buf.getvalue(), "3.結合テスト項目")
+    spec = testspec.extract(buf.getvalue(), "3.結合テスト項目", MAPPING)
     groups = {(s.screen_name, g.medium_category): g for s in spec.screens for g in s.groups}
     assert groups[("画面A", "中項目X")].small_category == "小項目S1"
     assert groups[("画面A", "中項目Y")].small_category == ""   # 中項目変化で小項目リセット
@@ -93,5 +109,5 @@ def test_marker_split_when_no_newline():
     ws["J10"] = "①一つ目②二つ目"
     buf = BytesIO()
     wb.save(buf)
-    spec = testspec.extract(buf.getvalue(), "S")
+    spec = testspec.extract(buf.getvalue(), "S", MAPPING)
     assert spec.screens[0].groups[0].cases[0].execution_steps == ["①一つ目", "②二つ目"]

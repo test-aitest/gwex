@@ -82,9 +82,6 @@ def _structural(el: dict, doc: dict) -> list[Block]:
     return []
 
 
-# --- list -----------------------------------------------------------------
-
-
 def _build_list(paras: list[dict], doc: dict) -> ListBlock:
     """箇条書き段落群を nestingLevel に従ってネストした ListBlock に組む。"""
     root = ListBlock(ordered=_is_ordered(paras[0], doc), items=[])
@@ -119,9 +116,6 @@ def _is_ordered(para: dict, doc: dict) -> bool:
     return gt is not None and gt != "GLYPH_TYPE_UNSPECIFIED"
 
 
-# --- table ----------------------------------------------------------------
-
-
 def _table(table: dict, doc: dict) -> Table:
     cells_by_row: list[list[list[Block]]] = []
     for row in table.get("tableRows", []):
@@ -131,9 +125,6 @@ def _table(table: dict, doc: dict) -> Table:
     if not cells_by_row:
         return Table(header=None, rows=[])
     return Table(header=cells_by_row[0], rows=cells_by_row[1:])
-
-
-# --- inline ---------------------------------------------------------------
 
 
 def _paragraph_inlines(para: dict, doc: dict) -> tuple[list[Inline], list[Image]]:

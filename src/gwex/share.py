@@ -2,7 +2,7 @@
 
 ローカルの Office ファイル(.xlsx/.docx/.pptx/.pdf)を Google Drive にアップロードし、
 「リンクを知っている全員が閲覧可(anyone reader)」に設定して、埋め込み/閲覧用の共有 URL を返す。
-アプリ(Engram)はこの URL を DB に保持し、右ペインで preview 埋め込み表示する。
+利用側のアプリはこの URL を DB に保持し、右ペインで preview 埋め込み表示する。
 
 `drive.file` スコープが必要(gwex auth を再実行して付与)。
 """
@@ -42,7 +42,6 @@ def share_file(path: str, *, convert: bool = False, public: bool = True, name: s
 
     fname = os.path.basename(path)
     ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
-    # 表示名: --name があればそれを正本に。無ければファイル名(convert 時は拡張子を落とす)。
     display = name or (fname.rsplit(".", 1)[0] if convert else fname)
     body: dict[str, str] = {"name": display}
     if convert and ext in _GOOGLE:
@@ -67,8 +66,7 @@ def share_file(path: str, *, convert: bool = False, public: bool = True, name: s
 def rename_file(source: str, name: str) -> str:
     """既存の Drive ファイル(スプシ/ドキュメント等)の表示名を変更する。
 
-    source は URL でも file_id でも可。share 後に表示名がズレていたときの修正に使う
-    (例: 中間ファイル名のままになったスプシを正式名に直す)。
+    source は URL でも file_id でも可。share 後に表示名がズレていたときの修正に使う。
     """
     from gwex.fetcher import google as _google
 

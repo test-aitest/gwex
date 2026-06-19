@@ -32,7 +32,6 @@ def parse(ss: dict) -> Document:
 
 
 def _raw_cells(sheet: dict) -> list[list[dict | None]]:
-    """シートの CellData を 2 次元配列（dict or None）で返す。"""
     data = sheet.get("data", [])
     if not data:
         return []
