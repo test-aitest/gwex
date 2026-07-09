@@ -110,6 +110,30 @@ def test_pair_mismatch_within_right_pair(tmp_path):
     assert issues[0]["cell"] == "N8"
 
 
+def test_subpixel_pair_diff_is_tolerated(tmp_path):
+    """set-image の丸め誤差（1px 前後）は破綻としない。
+
+    実データ由来: 2026-000999 の answer（ユーザー提供の正解）が
+    C8=306.8x669.0px / H8=306.2x667.7px で 0.6/1.3px ずれている。
+    """
+    def build(ws):
+        ws.merge_cells("C8:G45")
+        ws.merge_cells("H8:L45")
+        _add(ws, "C8", 307, 669)
+        _add(ws, "H8", 306, 668)
+    assert image_check.check(_book(tmp_path, build))["issues"] == []
+
+
+def test_visible_pair_diff_is_flagged(tmp_path):
+    """許容を超える差（実データ 2026-000322 の高さ 4px 差）は検出する。"""
+    def build(ws):
+        ws.merge_cells("C8:G45")
+        ws.merge_cells("H8:L45")
+        _add(ws, "C8", 306, 667)
+        _add(ws, "H8", 304, 663)   # 高さ 4px 差
+    assert "pair_mismatch" in _kinds(_book(tmp_path, build))
+
+
 def test_duplicate_detected(tmp_path):
     """同一アンカーに2枚（埋め込み＋overlay の二重貼り）は duplicate。"""
     def build(ws):

@@ -8,7 +8,7 @@
 
 - ``overflow``      画像の表示寸法が、アンカー先の結合枠より大きい（枠からはみ出す）
 - ``no_frame``      画像が結合枠の左上に紐づいていない（セルの上に浮いている）
-- ``pair_mismatch`` 修正前／修正後のペアで表示寸法が違う
+- ``pair_mismatch`` 修正前／修正後のペアで表示寸法が違う（``pair_tolerance_px`` 超）
 - ``duplicate``     同一アンカーセルに画像が2枚以上ある（埋め込み＋overlay の二重貼り）
 - ``aspect``        表示寸法の縦横比が元画像とずれている（引き伸ばし／潰れ）
 
@@ -95,11 +95,16 @@ def _describe(ws, img) -> Optional[dict]:
 
 
 def check(path: str, *, sheets: Optional[list[str]] = None,
-          tolerance_px: float = 4.0, aspect_tolerance: float = 0.01) -> dict:
+          tolerance_px: float = 4.0, aspect_tolerance: float = 0.01,
+          pair_tolerance_px: float = 2.0) -> dict:
     """画像の位置・寸法を検査する。返り値 {images: {...}, issues: [...]}。
 
     issues の各要素は {kind, sheet, cell, detail} 形式。空なら破綻なし。
-    aspect_tolerance は縦横比のずれの許容割合（既定 1%）。
+
+    - aspect_tolerance: 縦横比のずれの許容割合（既定 1%）
+    - pair_tolerance_px: 修正前後の寸法差の許容 px（既定 2）。
+      set-image の枠フィット計算は丸め誤差で 1px 前後ずれる。ユーザー提供の
+      answer ファイルでも 0.6〜1.3px の差があり、これを破綻としない。
     """
     wb = load_workbook(path)
     targets = sheets or wb.sheetnames
@@ -131,8 +136,8 @@ def check(path: str, *, sheets: Optional[list[str]] = None,
             if d["frame"] is None:
                 issues.append({
                     "kind": "no_frame", "sheet": s, "cell": d["cell"],
-                    "detail": f"結合枠の左上に紐づかない画像（{d['w_px']}x{d['h_px']}px）。"
-                              "セルの上に浮いている可能性",
+                    "detail": f"画像（{d['w_px']}x{d['h_px']}px）のアンカーが結合枠の左上でない。"
+                              "テンプレの画像枠（結合セル）が壊れている疑い＝はみ出し判定ができない",
                 })
                 continue
 
@@ -163,12 +168,15 @@ def check(path: str, *, sheets: Optional[list[str]] = None,
             ordered = sorted(group, key=lambda d: d["col"])
             for i in range(0, len(ordered) - 1, 2):
                 before, after = ordered[i], ordered[i + 1]
-                if (before["w_emu"], before["h_emu"]) != (after["w_emu"], after["h_emu"]):
+                dw = abs(before["w_px"] - after["w_px"])
+                dh = abs(before["h_px"] - after["h_px"])
+                if dw > pair_tolerance_px or dh > pair_tolerance_px:
                     issues.append({
                         "kind": "pair_mismatch", "sheet": s, "cell": before["cell"],
                         "detail": f"修正前/修正後の表示寸法が不一致: "
                                   f"{before['cell']}={before['w_px']}x{before['h_px']}px / "
-                                  f"{after['cell']}={after['w_px']}x{after['h_px']}px",
+                                  f"{after['cell']}={after['w_px']}x{after['h_px']}px "
+                                  f"(差 {round(dw,1)}w/{round(dh,1)}h px)",
                     })
 
     return {"images": all_images, "issues": issues}

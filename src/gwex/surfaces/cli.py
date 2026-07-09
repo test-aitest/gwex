@@ -221,6 +221,7 @@ def check_images(
     sheet: Optional[list[str]] = typer.Option(None, "--sheet", help="対象シート（複数可。省略時は全シート）"),
     tolerance_px: float = typer.Option(4.0, "--tolerance-px", help="はみ出し判定の許容誤差（px）"),
     aspect_tolerance: float = typer.Option(0.01, "--aspect-tolerance", help="縦横比ずれの許容割合"),
+    pair_tolerance_px: float = typer.Option(2.0, "--pair-tolerance-px", help="修正前後の寸法差の許容（px）"),
     to: str = typer.Option("summary", "--to", help="出力: summary | json"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先ファイル（省略時は標準出力）"),
 ) -> None:
@@ -230,7 +231,8 @@ def check_images(
     from gwex.domains import image_check
 
     result = image_check.check(target, sheets=list(sheet) if sheet else None,
-                               tolerance_px=tolerance_px, aspect_tolerance=aspect_tolerance)
+                               tolerance_px=tolerance_px, aspect_tolerance=aspect_tolerance,
+                               pair_tolerance_px=pair_tolerance_px)
     text = _json.dumps(result, ensure_ascii=False, indent=1) if to == "json" else image_check.summarize(result)
     if output:
         with open(output, "w", encoding="utf-8") as f:
