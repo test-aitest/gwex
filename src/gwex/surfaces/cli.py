@@ -215,6 +215,33 @@ def lint(
         raise typer.Exit(code=1)
 
 
+@app.command(name="check-images")
+def check_images(
+    target: str = typer.Argument(..., help="検査する .xlsx"),
+    sheet: Optional[list[str]] = typer.Option(None, "--sheet", help="対象シート（複数可。省略時は全シート）"),
+    tolerance_px: float = typer.Option(4.0, "--tolerance-px", help="はみ出し判定の許容誤差（px）"),
+    aspect_tolerance: float = typer.Option(0.01, "--aspect-tolerance", help="縦横比ずれの許容割合"),
+    to: str = typer.Option("summary", "--to", help="出力: summary | json"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先ファイル（省略時は標準出力）"),
+) -> None:
+    """画像の はみ出し/浮遊/二重/前後サイズ違い/縦横比崩れ を数値検出する（目視の置き換え・破綻 0 が条件）。"""
+    import json as _json
+
+    from gwex.domains import image_check
+
+    result = image_check.check(target, sheets=list(sheet) if sheet else None,
+                               tolerance_px=tolerance_px, aspect_tolerance=aspect_tolerance)
+    text = _json.dumps(result, ensure_ascii=False, indent=1) if to == "json" else image_check.summarize(result)
+    if output:
+        with open(output, "w", encoding="utf-8") as f:
+            f.write(text)
+        typer.echo(f"書き出しました: {output}（破綻 {len(result['issues'])} 件）")
+    else:
+        typer.echo(text)
+    if result["issues"]:
+        raise typer.Exit(code=1)
+
+
 @app.command(name="diff")
 def diff(
     a: str = typer.Argument(..., help="比較元 .xlsx（自作）"),
@@ -346,6 +373,21 @@ def set_row_height_cmd(
 
     dest = base.set_row_height(xlsx, sheet, row, height, output=output)
     typer.echo(f"行高を設定しました: {dest}")
+
+
+@app.command(name="set-col-width")
+def set_col_width_cmd(
+    target: str = typer.Argument(..., help="ローカル .xlsx パス または Google スプレッドシート URL"),
+    sheet: str = typer.Option(..., "--sheet", help="対象シート名"),
+    col: str = typer.Option(..., "--col", help="列文字（例: C）"),
+    width: float = typer.Option(..., "--width", help="列幅。Google スプシは pixel、xlsx は Excel 列幅単位"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（xlsx のみ・既定 in-place）"),
+) -> None:
+    """指定列の幅を設定する（xlsx=Excel列幅単位 / Google=pixel）。画像枠の左右非対称是正用。"""
+    from gwex.writer import base
+
+    dest = base.set_col_width(target, sheet, col, width, output=output)
+    typer.echo(f"列幅を設定しました ({col}): {dest}")
 
 
 @app.command(name="set-alignment")
