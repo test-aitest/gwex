@@ -51,6 +51,18 @@ def set_row_height(
     return dest
 
 
+def set_col_width(
+    path: str, sheet: str, col: str, width: float, *, output: Optional[str] = None
+) -> str:
+    """指定列の幅を設定する（Excel 列幅単位）。"""
+    wb = load_workbook(path)
+    ws = wb[sheet]
+    ws.column_dimensions[col].width = width
+    dest = output or path
+    wb.save(dest)
+    return dest
+
+
 def set_merge_cells(
     path: str, sheet: str, ranges: list[str], *, output: Optional[str] = None
 ) -> str:

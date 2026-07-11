@@ -334,6 +334,190 @@ def set_image(
     typer.echo(f"画像を挿入しました: {dest}")
 
 
+@app.command(name="annotate-image")
+def annotate_image(
+    xlsx: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    sheet: str = typer.Option(..., "--sheet", help="対象シート名"),
+    rects: list[str] = typer.Option(..., "--rect", help='赤枠 "x,y,w,h[:label]"（元画像のピクセル座標。複数可。label 省略時は 1,2,… の連番）'),
+    name: Optional[str] = typer.Option(None, "--name", help="対象画像名（例: capture2）。シートに1枚なら省略可"),
+    color: str = typer.Option("FF0000", "--color", help="枠・バッジの色（RRGGBB）"),
+    line_pt: float = typer.Option(2.25, "--line-pt", help="枠線の太さ（pt）"),
+    badge: bool = typer.Option(True, "--badge/--no-badge", help="番号バッジを付ける"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
+) -> None:
+    """画像の上に変更箇所の赤枠+番号をネイティブ図形として注入する（xlsx 専用）。
+
+    座標は元画像（キャプチャ PNG）のピクセル。図形は Excel 上で移動・削除できる。
+    注意: set-text 等 openpyxl 系コマンドで保存すると図形だけ消えるため、注釈は
+    ワークフローの最終段で実行する（消えたら再実行）。取り消しは clear-annotations。
+    Google スプレッドシートには図形追加 API が存在しないため未対応。
+    """
+    from gwex.fetcher import google
+    from gwex.writer import xlsx_zip
+
+    if google.detect(xlsx) is not None:
+        raise typer.BadParameter(
+            "Google スプレッドシートには図形追加 API がありません（annotate-image は xlsx 専用）。")
+    annots = []
+    for i, spec in enumerate(rects, start=1):
+        body, _, label = spec.partition(":")
+        parts = [s.strip() for s in body.split(",")]
+        if len(parts) != 4:
+            raise typer.BadParameter(f'--rect は "x,y,w,h[:label]" 形式です: {spec!r}')
+        x, y, w, h = (int(s) for s in parts)
+        annots.append((x, y, w, h, label.strip() or str(i)))
+    dest = xlsx_zip.add_annotations(
+        xlsx, sheet, annots, name=name, color=color, line_pt=line_pt, badge=badge, output=output)
+    typer.echo(f"赤枠を {len(annots)} 件注入しました: {dest}")
+
+
+@app.command(name="draw-flow")
+def draw_flow_cmd(
+    output_xlsx: str = typer.Argument(..., help="出力先 .xlsx（新規作成・既存は上書き）"),
+    spec_path: str = typer.Option(..., "--spec", help="フロー定義ファイル（YAML / JSON）"),
+) -> None:
+    """spec から画面遷移図の xlsx を生成する（スクショ+赤枠+矢印+ラベル+処理ボックス）。
+
+    spec の形式は gwex.writer.xlsx_flow の docstring を参照。ノードの画像パスは
+    spec ファイルのディレクトリからの相対で解決する。生成した遷移図は編集せず
+    成果物として扱う（openpyxl 系コマンドで再保存すると図形が消える）。
+    """
+    import json as _json
+    import os as _os
+
+    from gwex.writer import xlsx_flow
+
+    with open(spec_path, encoding="utf-8") as f:
+        text = f.read()
+    if spec_path.endswith((".yaml", ".yml")):
+        import yaml
+
+        spec = yaml.safe_load(text)
+    else:
+        spec = _json.loads(text)
+    dest = xlsx_flow.draw_flow(spec, output_xlsx, base_dir=_os.path.dirname(_os.path.abspath(spec_path)))
+    typer.echo(
+        f"画面遷移図を生成しました: {dest}"
+        f"（nodes {len(spec.get('nodes') or [])} / edges {len(spec.get('edges') or [])}）")
+
+
+@app.command(name="flow-spec")
+def flow_spec_cmd(
+    graph_path: str = typer.Argument(..., help="スクリーングラフ YAML（例: devpilot-graph.yaml）"),
+    from_screen: str = typer.Option(..., "--from", help="起点の画面名（例: LoginViewController）"),
+    to_screen: str = typer.Option(..., "--to", help="終点の画面名"),
+    via: Optional[list[str]] = typer.Option(None, "--via", help="経由する画面名（複数可・順序どおり）"),
+    sheet: Optional[str] = typer.Option(None, "--sheet", help="シート名（省略時は経路から自動生成）"),
+    image_dir: str = typer.Option("caps", "--image-dir", help="スクショ配置予定ディレクトリ（image パスの接頭辞）"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 YAML（省略時は標準出力）"),
+) -> None:
+    """スクリーングラフから最短経路を抽出し、draw-flow 用 spec の雛形 YAML を生成する。
+
+    画像パスと trigger_rect は TODO プレースホルダで出力する（スクショ配置後に
+    draw-flow へ渡す）。requiredInputs 等の認証情報は spec に転記しない。
+    """
+    from gwex.domains import flow_graph
+
+    screens = flow_graph.load_graph(graph_path)
+    path = flow_graph.find_path(screens, from_screen, to_screen, via=list(via) if via else None)
+    spec = flow_graph.build_spec(screens, path, sheet=sheet, image_dir=image_dir)
+    text = flow_graph.render_spec_yaml(spec)
+    if output:
+        with open(output, "w", encoding="utf-8") as f:
+            f.write(text)
+        typer.echo(f"spec を書き出しました: {output}（経路: {' → '.join(path)}）")
+    else:
+        typer.echo(text)
+
+
+@app.command(name="flow-capture")
+def flow_capture_cmd(
+    spec_path: str = typer.Argument(..., help="flow-spec が生成した spec YAML"),
+    graph_path: str = typer.Option(..., "--graph", help="スクリーングラフ YAML（requiredInputs の取得元）"),
+    udid: str = typer.Option(..., "--udid", help="シミュレータ/デバイスの UDID"),
+    bundle_id: str = typer.Option(..., "--bundle-id", help="アプリの Bundle ID"),
+    appium: str = typer.Option("http://127.0.0.1:4723", "--appium", help="Appium サーバ URL"),
+    caps_dir: Optional[str] = typer.Option(None, "--caps-dir", help="スクショ保存先（既定: spec と同じ場所の caps/）"),
+    settle: float = typer.Option(2.0, "--settle", help="遷移後の待ち秒数"),
+    dismiss: Optional[list[str]] = typer.Option(
+        None, "--dismiss",
+        help="対象要素が見つからない間にタップして閉じる邪魔要素（複数可）。既定の「閉じる」等に追加される"),
+    cap: Optional[list[str]] = typer.Option(
+        None, "--cap",
+        help='追加 capability "key=value"（複数可。実機は appium:xcodeOrgId / appium:xcodeSigningId 等）'),
+    rewind: Optional[list[str]] = typer.Option(
+        None, "--rewind",
+        help="実走前に、この「戻る」要素（複数候補可）を見えなくなるまで連打して起点へ戻す（状態復元起動の対策）"),
+    rewind_then: Optional[str] = typer.Option(
+        None, "--rewind-then", help="--rewind の最後にタップする要素（ホームタブ等）"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="完成 spec の出力先（既定: <spec名>_captured.yaml）"),
+    draw: Optional[str] = typer.Option(None, "--draw", help="続けて draw-flow で遷移図 xlsx も生成する出力先"),
+) -> None:
+    """Appium でフローを実走し、スクショ+trigger_rect を収集して spec を完成させる。
+
+    要: Appium サーバ稼働・対象デバイス起動・アプリ導入済み。認証情報は graph の
+    requiredInputs から入力にのみ使用し、spec には書き込まない。
+    """
+    import os as _os
+
+    import yaml
+
+    from gwex.domains import flow_capture, flow_graph
+
+    with open(spec_path, encoding="utf-8") as f:
+        spec = yaml.safe_load(f)
+    screens = flow_graph.load_graph(graph_path)
+    caps = caps_dir or _os.path.join(_os.path.dirname(_os.path.abspath(spec_path)), "caps")
+
+    extra = {}
+    for c in cap or []:
+        k, _, v = c.partition("=")
+        if not _:
+            raise typer.BadParameter(f'--cap は "key=value" 形式です: {c!r}')
+        extra[k.strip()] = v.strip()
+    client = flow_capture.AppiumClient(appium)
+    typer.echo(f"Appium セッション開始: {appium} / udid={udid}")
+    client.start(udid, bundle_id, extra=extra or None)
+    dis = flow_capture._DEFAULT_DISMISS + tuple(dismiss or ())
+    if rewind:
+        flow_capture.rewind(client, rewind, rewind_then, dismiss=dis, settle=settle)
+    try:
+        spec = flow_capture.capture_flow(spec, screens, client, caps, settle=settle, dismiss=dis)
+    except Exception:
+        # 途中まで収集した rect/スクショを失わないよう部分ダンプを残す
+        partial = _os.path.splitext(spec_path)[0] + "_partial.yaml"
+        with open(partial, "w", encoding="utf-8") as f:
+            yaml.safe_dump(spec, f, allow_unicode=True, sort_keys=False)
+        typer.echo(f"失敗（途中結果を保存）: {partial}")
+        raise
+    finally:
+        client.quit()
+
+    dest = output or _os.path.splitext(spec_path)[0] + "_captured.yaml"
+    with open(dest, "w", encoding="utf-8") as f:
+        yaml.safe_dump(spec, f, allow_unicode=True, sort_keys=False)
+    typer.echo(f"収集完了: {dest}（スクショ: {caps}/）")
+
+    if draw:
+        from gwex.writer import xlsx_flow
+
+        out = xlsx_flow.draw_flow(spec, draw, base_dir=_os.path.dirname(_os.path.abspath(dest)))
+        typer.echo(f"画面遷移図を生成しました: {out}")
+
+
+@app.command(name="clear-annotations")
+def clear_annotations(
+    xlsx: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    sheet: str = typer.Option(..., "--sheet", help="対象シート名"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
+) -> None:
+    """annotate-image で注入した赤枠・番号バッジを全て除去する（画像は残す）。"""
+    from gwex.writer import xlsx_zip
+
+    dest, n = xlsx_zip.remove_annotations(xlsx, sheet, output=output)
+    typer.echo(f"注釈図形を {n} 個削除しました: {dest}")
+
+
 @app.command(name="set-section")
 def set_section(
     target: str = typer.Argument(..., help="ローカル .xlsx パス または Google スプレッドシート URL"),
@@ -461,6 +645,120 @@ def export_pdf_cmd(
             if r.get("png"):
                 line += f" / PNG: {r['png']}"
             typer.echo(f"[OK] {r['sheet']} -> {line}")
+
+
+@app.command(name="sheet-scan")
+def sheet_scan_cmd(
+    path: str = typer.Argument(..., help="ローカル .xlsx / .xlsm パス"),
+    sheet: str = typer.Option(..., "--sheet", help="対象シート名（例: N0501）"),
+    cells_mode: str = typer.Option("sparse", "--cells-mode", help="sparse=B列+結合セル左上のみ | full=全値セル"),
+    to: str = typer.Option("summary", "--to", help="出力: summary | json"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先ファイル（省略時は標準出力）"),
+) -> None:
+    """巨大 .xlsm を開かずに1シートの構造（セクション/セル/画像/図形）を typed JSON で見る。
+
+    セル文字列は sharedStrings のふりがな（rPh）を除去し NFC 正規化して返す。
+    ZIP を読むだけで書き込みは行わない（.xlsm の VBA・図形に一切触れない）。
+    """
+    import json as _json
+    import os as _os
+
+    from gwex.domains import sheet_scan
+    from gwex.writer import xlsx_zip
+
+    if not _os.path.isfile(path):
+        raise typer.BadParameter(f"ファイルがありません: {path}")
+    if cells_mode not in ("sparse", "full"):
+        raise typer.BadParameter(f"--cells-mode は sparse | full: {cells_mode!r}")
+    entries = xlsx_zip._read_zip(path)
+    try:
+        result = sheet_scan.scan(entries, sheet, cells_mode=cells_mode)
+    except ValueError as e:
+        raise typer.BadParameter(str(e))
+    text = _json.dumps(result, ensure_ascii=False, indent=1) if to == "json" else sheet_scan.summarize(result)
+    if output:
+        with open(output, "w", encoding="utf-8") as f:
+            f.write(text)
+        typer.echo(f"書き出しました: {output}")
+    else:
+        typer.echo(text)
+
+
+@app.command(name="apply-ops")
+def apply_ops_cmd(
+    path: str = typer.Argument(..., help="編集対象の .xlsx / .xlsm パス（読み取りのみ。書き出しは別ファイル）"),
+    spec: str = typer.Option(..., "--spec", help="ops 定義 YAML（set_cell / clear_cell / insert_rows / append_history_row / edit_shape_text / add_shape / delete_shape / replace_image / clone_sheet）"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先（省略時は <name>_edited.<ext> を同ディレクトリに）"),
+    in_place: bool = typer.Option(False, "--in-place", help="入力ファイルを上書きする（明示時のみ）"),
+) -> None:
+    """宣言的 ops を ZIP 手術で適用する（openpyxl の load→save を通さず図形・VBA を温存）。
+
+    全 op 成功＋内部整合チェック OK のときだけ書き出す。1つでも失敗したら
+    何も書かずに失敗 op と理由を JSON で報告して exit 1。成功時は変更した
+    ZIP エントリの一覧を JSON で報告する（監査ログ）。
+    """
+    import json as _json
+    import os as _os
+
+    import yaml
+
+    from gwex.writer import xlsm_ops
+
+    if not _os.path.isfile(path):
+        raise typer.BadParameter(f"ファイルがありません: {path}")
+    if not _os.path.isfile(spec):
+        raise typer.BadParameter(f"spec がありません: {spec}")
+    if in_place and output:
+        raise typer.BadParameter("--in-place と -o は同時指定できません")
+    with open(spec, encoding="utf-8") as f:
+        try:
+            spec_dict = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise typer.BadParameter(f"spec の YAML が不正です: {e}")
+    report = xlsm_ops.apply_ops(path, spec_dict, output=output, in_place=in_place)
+    typer.echo(_json.dumps(report, ensure_ascii=False, indent=1))
+    if not report.get("ok"):
+        raise typer.Exit(code=1)
+
+
+@app.command(name="verify-xlsm")
+def verify_xlsm_cmd(
+    base: str = typer.Argument(..., help="編集前の .xlsx / .xlsm"),
+    edited: str = typer.Argument(..., help="編集後の .xlsx / .xlsm"),
+    expect_entries: Optional[str] = typer.Option(
+        None, "--expect-entries",
+        help="変更されてよい ZIP エントリ（カンマ区切り）。指定時はそれ以外の変更を ERROR（最小タッチ検証）"),
+    to: str = typer.Option("summary", "--to", help="出力: summary | json"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先ファイル（省略時は標準出力）"),
+) -> None:
+    """編集後の .xlsm を base と突き合わせて整合検査する（ERROR ありで exit 1）。
+
+    vbaProject.bin のバイト一致 / row-セル整合（row N 内のセルが別行に紛れる
+    破損クラス）/ 行内セルの列順 / mergeCell / drawing の図形数・cNvPr 重複・
+    r:embed 解決 / sharedStrings 変更（WARNING）を機械検査する。
+    """
+    import json as _json
+    import os as _os
+
+    from gwex.domains import xlsm_verify
+    from gwex.writer import xlsx_zip
+
+    for p in (base, edited):
+        if not _os.path.isfile(p):
+            raise typer.BadParameter(f"ファイルがありません: {p}")
+    expect = [e.strip() for e in expect_entries.split(",") if e.strip()] if expect_entries else None
+    result = xlsm_verify.verify(xlsx_zip._read_zip(base), xlsx_zip._read_zip(edited),
+                                expect_entries=expect)
+    text = _json.dumps(result, ensure_ascii=False, indent=1) if to == "json" else xlsm_verify.summarize(result)
+    if output:
+        with open(output, "w", encoding="utf-8") as f:
+            f.write(text)
+        typer.echo(f"書き出しました: {output}"
+                   f"（ERROR {result['counts']['errors']} / WARN {result['counts']['warnings']}）")
+    else:
+        typer.echo(text)
+    if not result["ok"]:
+        raise typer.Exit(code=1)
 
 
 def main() -> None:

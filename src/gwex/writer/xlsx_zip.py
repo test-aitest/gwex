@@ -78,17 +78,26 @@ def _ensure_png_content_type(entries: dict[str, bytes]) -> None:
         entries["[Content_Types].xml"] = ct.encode("utf-8")
 
 
-def _drawing_for_sheet(entries: dict[str, bytes], sheet_xml: str) -> tuple[str, str]:
-    """シートの drawing パスと drawing rels パスを返す。無ければ新規作成して配線する。"""
+def _find_drawing(entries: dict[str, bytes], sheet_xml: str) -> Optional[tuple[str, str]]:
+    """シートに配線済みの drawing パスと drawing rels パスを返す（無ければ None）。"""
     base = sheet_xml.split("/")[-1]  # sheet2.xml
     rels_path = f"xl/worksheets/_rels/{base}.rels"
     rels = entries.get(rels_path, b"").decode("utf-8")
     m = re.search(r'Target="([^"]*drawings/drawing\d+\.xml)"', rels) if rels else None
-    if m:
-        draw = m.group(1).split("/")[-1]
-        return f"xl/drawings/{draw}", f"xl/drawings/_rels/{draw}.rels"
+    if not m:
+        return None
+    draw = m.group(1).split("/")[-1]
+    return f"xl/drawings/{draw}", f"xl/drawings/_rels/{draw}.rels"
+
+
+def _drawing_for_sheet(entries: dict[str, bytes], sheet_xml: str) -> tuple[str, str]:
+    """シートの drawing パスと drawing rels パスを返す。無ければ新規作成して配線する。"""
+    found = _find_drawing(entries, sheet_xml)
+    if found:
+        return found
 
     # 新規 drawing を作成
+    rels_path = f"xl/worksheets/_rels/{sheet_xml.split('/')[-1]}.rels"
     nums = [int(x) for n in entries for x in re.findall(r"xl/drawings/drawing(\d+)\.xml$", n)]
     dn = (max(nums) + 1) if nums else 1
     draw_path = f"xl/drawings/drawing{dn}.xml"
@@ -400,3 +409,256 @@ def add_image_over_cells(
         path, sheet, anchor, image_path,
         cell_range=cell_range, insert_rows=False, max_dim=max_dim, output=output,
     )
+
+
+# ---------------------------------------------------------------------------
+# 画像上への注釈図形（赤枠+番号バッジ）の注入
+#
+# openpyxl は図形追加 API を持たず、load→save で図形(sp)を必ず落とすため、
+# ここでも ZIP 直接編集で drawing XML に xdr:sp を追記する（画像注入と同方式）。
+# ---------------------------------------------------------------------------
+
+_EMU_PER_PT = 12700
+
+
+def _pics_in_drawing(dx: str) -> list[dict]:
+    """drawing XML 内の pic を持つアンカーを列挙する。
+
+    返り値: {name, col, col_off, row, row_off, cx, cy, rid} のリスト。
+    from（セルアンカー）と ext（表示 EMU 寸法）の両方を持つものだけを返す
+    （absoluteAnchor や ext 無し twoCellAnchor は注釈の位置基準にできないため除外）。
+    """
+    pics: list[dict] = []
+    for am in re.finditer(
+        r"<(?:xdr:)?(oneCellAnchor|twoCellAnchor|absoluteAnchor)>.*?</(?:xdr:)?\1>",
+        dx, re.DOTALL,
+    ):
+        block = am.group(0)
+        if not re.search(r"<(?:xdr:)?pic>", block):
+            continue
+        name = re.search(r'<(?:xdr:)?cNvPr [^>]*name="([^"]*)"', block)
+        frm = re.search(
+            r"<(?:xdr:)?from>\s*<(?:xdr:)?col>(\d+)</(?:xdr:)?col>\s*"
+            r"<(?:xdr:)?colOff>(-?\d+)</(?:xdr:)?colOff>\s*"
+            r"<(?:xdr:)?row>(\d+)</(?:xdr:)?row>\s*"
+            r"<(?:xdr:)?rowOff>(-?\d+)</(?:xdr:)?rowOff>",
+            block,
+        )
+        ext = re.search(r'<(?:xdr:)?ext cx="(\d+)" cy="(\d+)"', block)
+        rid = re.search(r'r:embed="(rId\d+)"', block)
+        # Excel が再保存時に付ける絶対座標キャッシュ（<a:xfrm><a:off>）。
+        # あれば注釈図形の xfrm を誤差ゼロで計算できる。
+        off = re.search(r'<a:off x="(-?\d+)" y="(-?\d+)"/>', block)
+        if not (frm and ext and rid):
+            continue
+        pics.append({
+            "name": name.group(1) if name else "",
+            "col": int(frm.group(1)), "col_off": int(frm.group(2)),
+            "row": int(frm.group(3)), "row_off": int(frm.group(4)),
+            "cx": int(ext.group(1)), "cy": int(ext.group(2)),
+            "rid": rid.group(1),
+            "off_x": int(off.group(1)) if off else None,
+            "off_y": int(off.group(2)) if off else None,
+        })
+    return pics
+
+
+def _anchor_origin_emu(sx: str, col0: int, row0: int) -> tuple[int, int]:
+    """セル（0始まり col0,row0）左上の、シート原点からの絶対 EMU 座標。
+
+    Excel 実式（列: round(文字幅×7)+5 px、行: pt×96/72 px）で換算した概算。
+    pic に <a:off>（Excel の絶対座標キャッシュ）が無い場合のフォールバック用。
+    """
+    cw = _col_widths(sx)
+    rh = _row_heights(sx)
+    dc, dr = _sheet_defaults(sx)
+    x = 0.0
+    for c in range(1, col0 + 1):
+        width = cw.get(c, dc)
+        x += (round(width * 7.0) + 5) if width else _COL_PX
+    y = 0.0
+    for r in range(1, row0 + 1):
+        height = rh.get(r, dr)
+        y += height * 96.0 / 72.0 if height else _ROW_PX
+    return round(x * _EMU), round(y * _EMU)
+
+
+def _media_for_rid(entries: dict[str, bytes], draw_rels: str, rid: str) -> str:
+    """drawing rels の rId から media エントリのパス（xl/media/imageN.png）を解決する。"""
+    rels = entries.get(draw_rels, b"").decode("utf-8")
+    rel = re.search(r'<Relationship\b[^>]*\bId="' + re.escape(rid) + r'"[^>]*/>', rels)
+    if not rel:
+        raise ValueError(f"画像 rel が見つかりません: {rid}")
+    mt = re.search(r'Target="([^"]+)"', rel.group(0))
+    if not mt:
+        raise ValueError(f"画像 rel に Target がありません: {rid}")
+    target = mt.group(1)
+    if "../" in target:
+        return "xl/" + target.split("../", 1)[1]
+    return target.lstrip("/")
+
+
+def add_annotations(
+    path: str,
+    sheet: str,
+    annots: list[tuple[int, int, int, int, str]],
+    *,
+    name: Optional[str] = None,
+    color: str = "FF0000",
+    line_pt: float = 2.25,
+    badge: bool = True,
+    output: Optional[str] = None,
+) -> str:
+    """埋め込み画像の上へ赤枠矩形+番号バッジをネイティブ図形（xdr:sp）として注入する。
+
+    annots: [(x, y, w, h, label), ...]。座標は**元画像（xl/media の実 PNG）のピクセル**。
+    表示位置は「表示 EMU × 画像内比率」で厳密換算するため、列幅換算の近似誤差が乗らない。
+
+    アンカーは absoluteAnchor（絶対 EMU）を使う。oneCellAnchor のオフセット合成だと
+    Excel はセル幅/行高を超えるオフセットをセル境界へクランプして描画がズレる（実測）。
+    絶対座標は pic の a:xfrm a:off（Excel の座標キャッシュ）があれば誤差ゼロ、無ければ
+    列幅/行高からの概算。absoluteAnchor は行挿入に追従しないため、行操作の後に実行する。
+
+    注意: openpyxl は load→save で図形を落とす（画像は保持）。set-text 等 openpyxl 系の
+    書込より**後に**実行すること。消えた場合は再実行すればよい。
+    """
+    from PIL import Image as PILImage
+
+    color = color.strip().lstrip("#").upper()
+    if not re.fullmatch(r"[0-9A-F]{6}", color):
+        raise ValueError(f"色は RRGGBB 16進6桁で指定してください: {color!r}")
+
+    entries = _read_zip(path)
+    sheet_xml = _sheet_xml_path(entries, sheet)
+    found = _find_drawing(entries, sheet_xml)
+    if not found:
+        raise ValueError(f"シートに画像がありません: {sheet}")
+    draw_path, draw_rels = found
+    dx = entries[draw_path].decode("utf-8")
+
+    pics = _pics_in_drawing(dx)
+    if not pics:
+        raise ValueError(f"シートに注釈可能な画像（セルアンカー+寸法つき）がありません: {sheet}")
+    if name is not None:
+        matches = [p for p in pics if p["name"] == name]
+        if not matches:
+            raise ValueError(
+                f"画像が見つかりません: {name}"
+                f"（候補: {', '.join(p['name'] or '(無名)' for p in pics)}）")
+        pic = matches[0]
+    elif len(pics) == 1:
+        pic = pics[0]
+    else:
+        raise ValueError(
+            "画像が複数あります。name で対象を指定してください"
+            f"（候補: {', '.join(p['name'] or '(無名)' for p in pics)}）")
+
+    media = _media_for_rid(entries, draw_rels, pic["rid"])
+    with PILImage.open(io.BytesIO(entries[media])) as im:
+        iw, ih = im.size
+
+    # 画像左上の絶対 EMU 座標。absoluteAnchor の pos と spPr/a:xfrm の両方に使う
+    # （Excel はアンカー、Quick Look 等の簡易レンダラは xfrm を見る。同値にして一致させる）。
+    if pic["off_x"] is not None and pic["off_y"] is not None:
+        pic_abs_x, pic_abs_y = pic["off_x"], pic["off_y"]
+    else:
+        ox, oy = _anchor_origin_emu(entries[sheet_xml].decode("utf-8"), pic["col"], pic["row"])
+        pic_abs_x, pic_abs_y = ox + pic["col_off"], oy + pic["row_off"]
+
+    from xml.sax.saxutils import escape
+
+    p = "xdr:" if "<xdr:wsDr" in dx else ""
+    a_ns = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+    next_id = max((int(i) for i in re.findall(r'<(?:xdr:)?cNvPr [^>]*id="(\d+)"', dx)),
+                  default=1) + 1
+    ln_emu = round(line_pt * _EMU_PER_PT)
+    bd = max(round(0.07 * min(pic["cx"], pic["cy"])), 22 * _EMU)  # バッジ径(EMU)
+    sz = max(600, round(bd / _EMU_PER_PT * 50))  # 番号フォント（1/100pt、径の約半分）
+    # 既存 annot の連番に続ける（追記実行でも名前が衝突しない）
+    seq = max((int(m) for m in re.findall(r'name="annot(\d+)"', dx)), default=0) + 1
+
+    parts: list[str] = []
+    for x, y, w, h, label in annots:
+        dx_emu = x * pic["cx"] // iw
+        dy_emu = y * pic["cy"] // ih
+        w_emu = max(1, w * pic["cx"] // iw)
+        h_emu = max(1, h * pic["cy"] // ih)
+        abs_x = pic_abs_x + dx_emu
+        abs_y = pic_abs_y + dy_emu
+        parts.append(
+            f'<{p}absoluteAnchor>'
+            f'<{p}pos x="{abs_x}" y="{abs_y}"/>'
+            f'<{p}ext cx="{w_emu}" cy="{h_emu}"/>'
+            f'<{p}sp><{p}nvSpPr><{p}cNvPr id="{next_id}" name="annot{seq}"/><{p}cNvSpPr/></{p}nvSpPr>'
+            f'<{p}spPr>'
+            f'<a:xfrm {a_ns}><a:off x="{abs_x}" y="{abs_y}"/><a:ext cx="{w_emu}" cy="{h_emu}"/></a:xfrm>'
+            f'<a:prstGeom {a_ns} prst="rect"><a:avLst/></a:prstGeom>'
+            f'<a:noFill {a_ns}/>'
+            f'<a:ln {a_ns} w="{ln_emu}"><a:solidFill><a:srgbClr val="{color}"/></a:solidFill></a:ln>'
+            f'</{p}spPr></{p}sp><{p}clientData/></{p}absoluteAnchor>'
+        )
+        next_id += 1
+        if badge:
+            # 矩形の左上角にバッジ中心を重ねる（シート外に出ないよう 0 で下限クランプ）
+            b_abs_x = max(0, abs_x - bd // 2)
+            b_abs_y = max(0, abs_y - bd // 2)
+            parts.append(
+                f'<{p}absoluteAnchor>'
+                f'<{p}pos x="{b_abs_x}" y="{b_abs_y}"/>'
+                f'<{p}ext cx="{bd}" cy="{bd}"/>'
+                f'<{p}sp><{p}nvSpPr><{p}cNvPr id="{next_id}" name="annot{seq}badge"/><{p}cNvSpPr/></{p}nvSpPr>'
+                f'<{p}spPr>'
+                f'<a:xfrm {a_ns}><a:off x="{b_abs_x}" y="{b_abs_y}"/><a:ext cx="{bd}" cy="{bd}"/></a:xfrm>'
+                f'<a:prstGeom {a_ns} prst="ellipse"><a:avLst/></a:prstGeom>'
+                f'<a:solidFill {a_ns}><a:srgbClr val="{color}"/></a:solidFill>'
+                f'<a:ln {a_ns}><a:noFill/></a:ln></{p}spPr>'
+                f'<{p}txBody><a:bodyPr {a_ns} anchor="ctr" lIns="0" tIns="0" rIns="0" bIns="0"/>'
+                f'<a:lstStyle {a_ns}/>'
+                f'<a:p {a_ns}><a:pPr algn="ctr"/>'
+                f'<a:r><a:rPr lang="ja-JP" sz="{sz}" b="1">'
+                f'<a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:rPr>'
+                f'<a:t>{escape(label)}</a:t></a:r></a:p></{p}txBody>'
+                f'</{p}sp><{p}clientData/></{p}absoluteAnchor>'
+            )
+            next_id += 1
+        seq += 1
+
+    close = f"</{p}wsDr>"
+    entries[draw_path] = dx.replace(close, "".join(parts) + close).encode("utf-8")
+    dest = output or path
+    _write_zip(entries, dest)
+    return dest
+
+
+def remove_annotations(path: str, sheet: str, *, output: Optional[str] = None) -> tuple[str, int]:
+    """add_annotations が注入した図形（cNvPr name=annot…）を除去する。返り値 (保存先, 除去数)。
+
+    pic を含むアンカーは名前が annot… でも除去しない（画像の誤削除防止）。
+    """
+    entries = _read_zip(path)
+    sheet_xml = _sheet_xml_path(entries, sheet)
+    found = _find_drawing(entries, sheet_xml)
+    dest = output or path
+    if not found:
+        _write_zip(entries, dest)
+        return dest, 0
+    draw_path, _ = found
+    dx = entries[draw_path].decode("utf-8")
+    removed = 0
+
+    def drop(m: re.Match) -> str:
+        nonlocal removed
+        block = m.group(0)
+        if (re.search(r'<(?:xdr:)?cNvPr [^>]*name="annot[^"]*"', block)
+                and not re.search(r"<(?:xdr:)?pic>", block)):
+            removed += 1
+            return ""
+        return block
+
+    dx = re.sub(
+        r"<(?:xdr:)?(oneCellAnchor|twoCellAnchor|absoluteAnchor)>.*?</(?:xdr:)?\1>",
+        drop, dx, flags=re.DOTALL,
+    )
+    entries[draw_path] = dx.encode("utf-8")
+    _write_zip(entries, dest)
+    return dest, removed

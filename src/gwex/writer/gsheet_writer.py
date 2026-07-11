@@ -124,6 +124,34 @@ def set_row_height(target: str, sheet: str, row: int, height_pt: float) -> str:
     return target
 
 
+def set_col_width(target: str, sheet: str, col: str, width_px: int) -> str:
+    """指定列の幅を設定する（Sheets API・pixel 単位）。col は列文字（例: C）。"""
+    from openpyxl.utils.cell import column_index_from_string
+
+    svc, _ = _service()
+    sid = _spreadsheet_id(target)
+    sheet_id = _get_sheet_id(svc, sid, sheet)
+    idx = column_index_from_string(col) - 1  # 0-indexed
+    svc.spreadsheets().batchUpdate(
+        spreadsheetId=sid,
+        body={
+            "requests": [{
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": idx,
+                        "endIndex": idx + 1,
+                    },
+                    "properties": {"pixelSize": max(1, int(width_px))},
+                    "fields": "pixelSize",
+                }
+            }]
+        },
+    ).execute()
+    return target
+
+
 def autofit_rows(target: str, sheet: str, start_row: int, end_row: int) -> str:
     """行高をコンテンツに合わせて自動調整する（Sheets API AutoResizeDimensionsRequest）。
 

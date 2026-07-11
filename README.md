@@ -160,6 +160,11 @@ Sheets REST API にはセル内画像挿入が無いため、Apps Script Web ア
 | [`update-case`](#テスト仕様の書き込み) | 既存ケース行を更新 | 両対応 |
 | [`set-text`](#セル操作) | セルにテキスト | 両対応 |
 | [`set-image`](#セル操作) | 画像をセルに配置 | 両対応 |
+| [`annotate-image`](#セル操作) | 画像上に赤枠+番号図形を注入 | xlsx 専用 |
+| [`clear-annotations`](#セル操作) | 注釈図形を除去 | xlsx 専用 |
+| [`draw-flow`](#セル操作) | 画面遷移図を生成（スクショ+矢印） | xlsx 専用 |
+| [`flow-spec`](#セル操作) | スクリーングラフから遷移図 spec を生成 | YAML |
+| [`flow-capture`](#セル操作) | Appium 実走でスクショ+ボタン矩形を収集 | iOS |
 | [`set-section`](#セル操作) | before/after セクション作成 | 両対応 |
 | [`insert-rows`](#行書式操作) | 行を挿入・シフト | 両対応 |
 | [`delete-rows`](#行書式操作) | 行を削除・シフト | 両対応 |
@@ -267,6 +272,63 @@ gwex set-text ./design.xlsx --sheet "3.結合テスト項目" --cell B2 --text "
 ```bash
 gwex set-image ./design.xlsx --sheet "2.画面イメージ(iOS)" --cell C7 --range C7:F25 --image cap.png --max-dim 1024
 ```
+
+#### `gwex annotate-image <xlsx> --sheet <名> --rect "x,y,w,h[:label]"` — 画像上に赤枠+番号を注入
+埋め込み画像の上へ、変更箇所を示す**赤枠矩形と番号バッジをネイティブ図形**（DrawingML `xdr:sp`）として注入する（**xlsx 専用**。Google スプレッドシートには図形 API が無い）。結合テスト項目から「①が変更点」と番号参照する用途。図形は Excel 上で移動・削除できる。
+| オプション | 説明 | 既定 |
+|---|---|---|
+| `--rect "x,y,w,h[:label]"` *(必須・複数可)* | 赤枠の位置と寸法（**元画像のピクセル座標**）。label 省略時は 1,2,… の連番 | — |
+| `--name <画像名>` | 対象画像（例: `capture2`）。シートに1枚なら省略可 | — |
+| `--color <RRGGBB>` | 枠・バッジの色 | `FF0000` |
+| `--line-pt <pt>` | 枠線の太さ | `2.25` |
+| `--no-badge` | 番号バッジを付けない | badge 有り |
+```bash
+gwex annotate-image ./design.xlsx --sheet "2.画面イメージ(iOS)" --name capture2 --rect "100,508,128,66:1"
+```
+注意: openpyxl 系コマンド（`set-text` 等）で保存すると**図形だけ消える**（画像は残る）ため、注釈はワークフローの最終段で実行する（消えたら再実行）。
+
+#### `gwex clear-annotations <xlsx> --sheet <名>` — 注釈図形を除去
+`annotate-image` が注入した赤枠・番号バッジを全て除去する（画像は残す）。`-o` 省略で in-place。
+
+#### `gwex draw-flow <出力.xlsx> --spec <flow.yaml>` — 画面遷移図を生成
+スクリーンショットを格子配置（列=遷移ステップ、行=同一画面のバリエーション）し、
+トリガーボタンの赤枠・矢印（直線/カギ線）・条件ラベル・処理ボックス付きの遷移図 xlsx を**新規生成**する（**xlsx 専用**）。
+spec の形式は `gwex.writer.xlsx_flow` の docstring を参照（nodes: 画面ID/画面名/画像/col/row、edges: from/to/trigger_rect/label/via/dash）。
+モーダル等への `detour` エッジは既定で**点線**（`dash: true/false` で任意のエッジを明示指定可）。
+画像パスは spec ファイルのディレクトリからの相対で解決。
+```bash
+gwex draw-flow ./振込フロー.xlsx --spec flow.yaml
+```
+注意: 生成した遷移図を openpyxl 系コマンドで再保存すると図形が消えるため、編集せず成果物として扱う（変更は spec を直して再生成）。
+
+#### `gwex flow-spec <graph.yaml> --from <画面> --to <画面>` — 遷移図 spec の雛形を生成
+UI クローラーが構築したスクリーングラフ（`screens/components/navigators` 形式、例: devpilot-graph.yaml）から
+最短経路を BFS で抽出し、`draw-flow` 用 spec の雛形 YAML を出力する。
+矢印ラベルはトリガーコンポーネントの表示ラベルから自動解決。認証情報（requiredInputs）は転記しない。
+| オプション | 説明 | 既定 |
+|---|---|---|
+| `--from / --to <画面名>` *(必須)* | 経路の起点/終点 | — |
+| `--via <画面名>` | 経由地（複数可・順序どおり） | — |
+| `--sheet <名>` | シート名 | 経路から自動 |
+| `--image-dir <dir>` | スクショ配置予定ディレクトリ | `caps` |
+```bash
+gwex flow-spec devpilot-graph.yaml --from LoginViewController --to TransferModalViewController -o flow.yaml
+# → caps/ にスクショを置き、必要なら trigger_rect を追記して: gwex draw-flow 遷移図.xlsx --spec flow.yaml
+```
+
+#### `gwex flow-capture <flow.yaml> --graph <graph.yaml> --udid <UDID> --bundle-id <ID>` — 実走収集
+Appium でシミュレータ/デバイス上のアプリを spec の経路どおりに操作し、
+各画面のスクリーンショットと trigger_component の**要素矩形（画像ピクセル座標）を自動計測**して spec を完成させる。
+要: Appium サーバ稼働（`--appium`、既定 `http://127.0.0.1:4723`）・対象デバイス起動・アプリ導入済み。
+| オプション | 説明 | 既定 |
+|---|---|---|
+| `--dismiss <要素ID>` | 邪魔要素（初回設定画面の完了ボタン等）を閉じる追加候補（複数可）。**末尾 `*` で前方一致**（例: `'次へ*'` は選択数つき「次へ (1)」にもマッチ） | 「閉じる」等 |
+| `--settle <秒>` | 遷移後の待ち | `2.0` |
+| `--draw <出力.xlsx>` | 続けて draw-flow で遷移図まで生成 | — |
+| `-o <yaml>` | 完成 spec の出力先 | `<spec>_captured.yaml` |
+spec の edge 拡張: `pre: ["＋1,000"]`（トリガーが入力するまで無効なケースで、先にタップする要素）。
+遷移が観測できるまで「オーバーレイ掃除→再タップ」するため、促進モーダル/コーチマークに強い。
+graph の requiredInputs（認証情報）は入力にのみ使い、spec へは書き込まない。
 
 #### `gwex set-section <target> --sheet <名> --top-row <N> --title <題>` — before/after セクション
 見出し + 修正前/修正後ラベル + 青背景 + 箱罫線を作り、画像を**枠の80%・比率維持・中央配置**。**Excel / Google 両対応**。

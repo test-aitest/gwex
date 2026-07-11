@@ -77,6 +77,18 @@ def set_row_height(target: str, sheet: str, row: int, height: float, *, output: 
     return backend.set_row_height(target, sheet, row, height, output=output)
 
 
+def set_col_width(target: str, sheet: str, col: str, width: float, *, output: Optional[str] = None) -> str:
+    """列幅を設定する（xlsx=Excel 列幅単位 / Google スプシ=pixel 単位）。
+
+    前後の画像枠が左右で非対称な列幅のとき、狭い列を他列と同じ幅に揃えて
+    set-image の枠フィットが前後同サイズになるようにするのに使う（画像は無加工のまま）。
+    """
+    backend, is_google = _backend(target)
+    if is_google:
+        return backend.set_col_width(target, sheet, col, int(width))
+    return backend.set_col_width(target, sheet, col, width, output=output)
+
+
 def set_merge_cells(target: str, sheet: str, ranges: list[str], *, output: Optional[str] = None) -> str:
     """セル範囲を結合する（xlsx のみ対応）。"""
     backend, is_google = _backend(target)
