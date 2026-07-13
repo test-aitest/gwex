@@ -201,6 +201,31 @@ def shape_text(block: str) -> str:
     return _nfc("".join(_unescape(t) for t in re.findall(r"<a:t>(.*?)</a:t>", block, re.DOTALL)))
 
 
+def _shape_labels(dx: str) -> dict[int, dict]:
+    """cNvPr id → {kind, text}（グループ内の図形も含む。コネクタ接続先の解決用）。"""
+    out: dict[int, dict] = {}
+    for m in re.finditer(r"<(?:xdr:)?sp[ >].*?</(?:xdr:)?sp>", dx, re.DOTALL):
+        sid, name = _cnvpr(m.group(0))
+        if sid is not None:
+            out[sid] = {"kind": "sp", "text": shape_text(m.group(0)) or name}
+    for m in re.finditer(r"<(?:xdr:)?pic[ >].*?</(?:xdr:)?pic>", dx, re.DOTALL):
+        pid, name = _cnvpr(m.group(0))
+        if pid is not None:
+            out[pid] = {"kind": "pic", "text": name}
+    return out
+
+
+def _cxn_endpoint(m: Optional[re.Match], labels: dict[int, dict]) -> Optional[dict]:
+    if not m:
+        return None
+    d: dict = {"id": int(m.group(1)), "idx": int(m.group(2))}
+    info = labels.get(d["id"])
+    if info:
+        d["kind"] = info["kind"]
+        d["text"] = info["text"]
+    return d
+
+
 def media_for_rid(entries: dict[str, bytes], draw_rels: str, rid: str) -> Optional[str]:
     rels = entries.get(draw_rels, b"").decode("utf-8")
     rel = re.search(r'<Relationship\b[^>]*\bId="' + re.escape(rid) + r'"[^>]*/>', rels)
@@ -259,6 +284,7 @@ def scan(entries: dict[str, bytes], sheet: str, *, cells_mode: str = "sparse") -
         counts["sp"] = len(re.findall(r"<(?:xdr:)?sp[ >]", dx))
         counts["cxnSp"] = len(re.findall(r"<(?:xdr:)?cxnSp[ >]", dx))
         counts["grpSp"] = len(re.findall(r"<(?:xdr:)?grpSp[ >]", dx))
+        labels = _shape_labels(dx) if counts["cxnSp"] else {}
         for am in _ANCHOR_RE.finditer(dx):
             kind, block = am.group(1), am.group(2)
             frm = _anchor_from(block)
@@ -267,13 +293,19 @@ def scan(entries: dict[str, bytes], sheet: str, *, cells_mode: str = "sparse") -
             if re.search(r"<(?:xdr:)?cxnSp[ >]", block):
                 sid, _name = _cnvpr(block)
                 prst = re.search(r'prst="(\w+)"', block)
-                st = re.search(r'<a:stCxn id="(\d+)"', block)
-                end = re.search(r'<a:endCxn id="(\d+)"', block)
+                st = re.search(r'<a:stCxn id="(\d+)" idx="(\d+)"', block)
+                end = re.search(r'<a:endCxn id="(\d+)" idx="(\d+)"', block)
+                xfm = re.search(r'<a:xfrm([^>]*)><a:off x="(-?\d+)" y="(-?\d+)"/>'
+                                r'<a:ext cx="(\d+)" cy="(\d+)"/>', block)
                 connectors.append({
                     "id": sid,
                     "preset": prst.group(1) if prst else None,
-                    "st": {"id": int(st.group(1))} if st else None,
-                    "end": {"id": int(end.group(1))} if end else None,
+                    "st": _cxn_endpoint(st, labels),
+                    "end": _cxn_endpoint(end, labels),
+                    "xfrm": ({"off": [int(xfm.group(2)), int(xfm.group(3))],
+                              "ext": [int(xfm.group(4)), int(xfm.group(5))],
+                              "flipH": 'flipH="1"' in xfm.group(1),
+                              "flipV": 'flipV="1"' in xfm.group(1)} if xfm else None),
                 })
             elif re.search(r"<(?:xdr:)?pic[ >]", block):
                 pid, name = _cnvpr(block)
@@ -328,4 +360,15 @@ def summarize(result: dict) -> str:
         lines.append(f"  [sp {sp['id']}] {sp['preset']} {txt!r} from={sp['from']}")
     if len(result["shapes"]) > 40:
         lines.append(f"  … 他 {len(result['shapes']) - 40} 図形")
+
+    def _ep(d: Optional[dict]) -> str:
+        if not d:
+            return "(座標)"
+        t = str(d.get("text", ""))
+        return f"id{d['id']}" + (f":{t[:14]!r}" if t else "")
+
+    for cn in result["connectors"][:40]:
+        lines.append(f"  [cxn {cn['id']}] {cn['preset']} {_ep(cn.get('st'))} → {_ep(cn.get('end'))}")
+    if len(result["connectors"]) > 40:
+        lines.append(f"  … 他 {len(result['connectors']) - 40} コネクタ")
     return "\n".join(lines)

@@ -111,3 +111,26 @@ def test_summarize_mentions_sections(tmp_path):
     text = sheet_scan.summarize(sheet_scan.scan(entries_of(p), "N1"))
     assert "■画面概要@7" in text
     assert "pic=1" in text
+
+
+def test_connectors_resolved_with_endpoints_and_xfrm(tmp_path):
+    """コネクタは st/end の接続先テキスト解決と絶対 xfrm(EMU) 付きで列挙される。"""
+    p = make_book(tmp_path, with_connectors=True)
+    result = sheet_scan.scan(entries_of(p), "N1")
+
+    assert result["counts"]["cxnSp"] == 2
+    c1, c2 = result["connectors"]
+    assert c1["id"] == 110
+    assert c1["preset"] == "straightConnector1"
+    assert c1["st"] == {"id": 101, "idx": 3, "kind": "sp", "text": "ボタン変更前"}
+    assert c1["end"] == {"id": 102, "idx": 1, "kind": "sp", "text": "ラベルA"}
+    assert c1["xfrm"] == {"off": [1548640, 2182880], "ext": [951360, 0],
+                          "flipH": False, "flipV": False}
+    assert c2["id"] == 111
+    assert c2["preset"] == "bentConnector3"
+    assert c2["st"] is None and c2["end"] is None  # 座標のみ（接続なし）
+    assert c2["xfrm"]["off"] == [1000000, 3000000]
+
+    text = sheet_scan.summarize(result)
+    assert "[cxn 110]" in text
+    assert "'ボタン変更前'" in text and "(座標)" in text

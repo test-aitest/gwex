@@ -80,12 +80,42 @@ def sp_anchor(id_: int, name: str, text: str, *, prst: str = "wedgeRectCallout",
     )
 
 
-def make_book(tmp_path, *, with_image: bool = True, with_shapes: bool = True) -> str:
+def cxn_anchor(id_: int, *, prst: str = "straightConnector1",
+               st=None, end=None,
+               off=(1548640, 2182880), ext=(951360, 0), flips: str = "") -> str:
+    """実ファイルの xdr:cxnSp と同じ構造（twoCellAnchor / stCxn・endCxn / 絶対 xfrm /
+    w=19050・tx1・tailEnd triangle / style ブロック）。"""
+    stx = f'<a:stCxn id="{st[0]}" idx="{st[1]}"/>' if st else ""
+    enx = f'<a:endCxn id="{end[0]}" idx="{end[1]}"/>' if end else ""
+    return (
+        f"<xdr:twoCellAnchor><xdr:from><xdr:col>8</xdr:col><xdr:colOff>0</xdr:colOff>"
+        f"<xdr:row>30</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>"
+        f"<xdr:to><xdr:col>9</xdr:col><xdr:colOff>0</xdr:colOff>"
+        f"<xdr:row>31</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>"
+        f'<xdr:cxnSp macro=""><xdr:nvCxnSpPr><xdr:cNvPr id="{id_}" name="コネクタ {id_}"/>'
+        f"<xdr:cNvCxnSpPr><a:cxnSpLocks/>{stx}{enx}</xdr:cNvCxnSpPr></xdr:nvCxnSpPr>"
+        f'<xdr:spPr><a:xfrm{flips}><a:off x="{off[0]}" y="{off[1]}"/>'
+        f'<a:ext cx="{ext[0]}" cy="{ext[1]}"/></a:xfrm>'
+        f'<a:prstGeom prst="{prst}"><a:avLst/></a:prstGeom>'
+        f'<a:ln w="19050"><a:solidFill><a:schemeClr val="tx1"/></a:solidFill>'
+        f'<a:tailEnd type="triangle"/></a:ln></xdr:spPr>'
+        f'<xdr:style><a:lnRef idx="1"><a:schemeClr val="accent1"/></a:lnRef>'
+        f'<a:fillRef idx="0"><a:schemeClr val="accent1"/></a:fillRef>'
+        f'<a:effectRef idx="0"><a:schemeClr val="accent1"/></a:effectRef>'
+        f'<a:fontRef idx="minor"><a:schemeClr val="tx1"/></a:fontRef></xdr:style>'
+        f"</xdr:cxnSp><xdr:clientData/></xdr:twoCellAnchor>"
+    )
+
+
+def make_book(tmp_path, *, with_image: bool = True, with_shapes: bool = True,
+              with_connectors: bool = False) -> str:
     """N1（画面シート）＋改版履歴＋template の3シート構成のフィクスチャ。
 
     - N1: B列 ■マーカー2つ / 結合セル B8:D9・B22:C23 / 非B非結合の C3
     - 改版履歴: row4 ヘッダ・row5 最終データ行（A=シリアル値）
     - drawing1.xml: pic 1枚（capture1, oneCellAnchor row0=19）+ sp 図形
+    - with_connectors: 実ファイル形状の cxnSp 2本（110=101→102 接続 / 111=座標のみ）と、
+      pic への a:xfrm 絶対座標キャッシュ（Excel 保存済み実ファイルは必ず持つ）を注入
     - xl/vbaProject.bin: ダミーバイト
     """
     import PIL.Image
@@ -127,14 +157,32 @@ def make_book(tmp_path, *, with_image: bool = True, with_shapes: bool = True) ->
     _wire_shared_strings(entries)
     if with_shapes:
         dx = entries["xl/drawings/drawing1.xml"].decode("utf-8")
+        # 101 と 102 は接続コネクタの幾何検証用に水平に離して置く
+        # （101 右辺中点 (1548640, 2182880) → 102 左辺中点 (2500000, 2182880)）
         shapes = (
-            sp_anchor(101, "CustomShape 1", "ボタン変更前")
-            + sp_anchor(102, "CustomShape 2", "ラベルA", prst="accentBorderCallout2", row=34)
+            sp_anchor(101, "CustomShape 1", "ボタン変更前", off=(1000000, 2000000))
+            + sp_anchor(102, "CustomShape 2", "ラベルA", prst="accentBorderCallout2",
+                        row=34, off=(2500000, 2000000))
             + sp_anchor(103, "CustomShape 3", "重複文言", row=38)
             + sp_anchor(104, "CustomShape 4", "重複文言", row=42)
         )
+        if with_connectors:
+            shapes += (
+                cxn_anchor(110, st=(101, 3), end=(102, 1))
+                + cxn_anchor(111, prst="bentConnector3",
+                             off=(1000000, 3000000), ext=(400000, 300000))
+            )
         entries["xl/drawings/drawing1.xml"] = dx.replace(
             "</xdr:wsDr>", shapes + "</xdr:wsDr>").encode("utf-8")
+    if with_connectors and with_image:
+        # Excel 保存済み実ファイルの pic は絶対座標キャッシュ a:xfrm を必ず持つ。
+        # gwex の set_cell_image は書かないため、実ファイル形状に寄せて注入する。
+        dx = entries["xl/drawings/drawing1.xml"].decode("utf-8")
+        a_ns = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+        xfrm = (f'<a:xfrm {a_ns}><a:off x="1200000" y="8000000"/>'
+                f'<a:ext cx="{IW * 9525}" cy="{IH * 9525}"/></a:xfrm>')
+        dx = dx.replace("<xdr:spPr><a:prstGeom", f"<xdr:spPr>{xfrm}<a:prstGeom", 1)
+        entries["xl/drawings/drawing1.xml"] = dx.encode("utf-8")
     entries["xl/vbaProject.bin"] = b"\x01\x02FAKE-VBA-BYTES\x03"
     rewrite(p, entries)
     return p

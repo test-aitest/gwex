@@ -687,7 +687,7 @@ def sheet_scan_cmd(
 @app.command(name="apply-ops")
 def apply_ops_cmd(
     path: str = typer.Argument(..., help="編集対象の .xlsx / .xlsm パス（読み取りのみ。書き出しは別ファイル）"),
-    spec: str = typer.Option(..., "--spec", help="ops 定義 YAML（set_cell / clear_cell / insert_rows / append_history_row / edit_shape_text / add_shape / delete_shape / replace_image / clone_sheet）"),
+    spec: str = typer.Option(..., "--spec", help="ops 定義 YAML（set_cell / clear_cell / insert_rows / set_merge / append_history_row / edit_shape_text / add_shape / delete_shape / move_shape / add_connector / delete_connector / replace_image / add_image / clone_sheet）。set_merge は range:（単一）か ranges:（複数）で B230:C233 形式の結合範囲を指定（既存結合と重なる場合は解除してから結合し、結果 notes に記録）。move_shape は match_text:（テキスト NFC 一意）か id:（cNvPr id）で図形を特定し dx_px:/dy_px:（省略時0）で移動（セルアンカーはシート実測の列幅・行高で col/off を再計算、spPr の xfrm off キャッシュも追従。負座標はエラー）。add_image は新規 PNG を media 追加＋absoluteAnchor の pic として挿入（at_px: [x,y] 必須、size_px: [w,h] 省略時は実画像サイズ。replace_image は既存 pic の差替のみ）"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先（省略時は <name>_edited.<ext> を同ディレクトリに）"),
     in_place: bool = typer.Option(False, "--in-place", help="入力ファイルを上書きする（明示時のみ）"),
 ) -> None:
