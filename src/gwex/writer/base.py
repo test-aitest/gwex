@@ -110,3 +110,31 @@ def autofit_rows(target: str, sheet: str, start_row: int, end_row: int) -> str:
             "xlsx は Excel が開いたときに customHeight=False の行を自動フィットします。"
         )
     return backend.autofit_rows(target, sheet, start_row, end_row)
+
+def preserve_drawings(target: str, dest: str, orig_entries, except_sheets=None) -> None:
+    """openpyxl 系の保存で落ちた drawing（画像・図形・コメントVML）を復元する。
+
+    openpyxl は load→save の round-trip で drawing を落とすため、テンプレの
+    注意書きバナー等が消える。呼び出し側で処理前に xlsx_zip.snapshot() を取り、
+    処理後に本関数を呼ぶ。
+    """
+    from pathlib import Path as _P
+
+    if _P(target).suffix.lower() != ".xlsx" or orig_entries is None:
+        return
+    from gwex.writer import xlsx_zip
+
+    xlsx_zip.restore_drawings(orig_entries, dest, except_sheets=except_sheets)
+
+
+def snapshot_if_xlsx(target: str):
+    from pathlib import Path as _P
+
+    if _P(target).suffix.lower() != ".xlsx":
+        return None
+    from gwex.writer import xlsx_zip
+
+    try:
+        return xlsx_zip.snapshot(target)
+    except Exception:
+        return None

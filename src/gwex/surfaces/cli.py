@@ -7,9 +7,28 @@ from __future__ import annotations
 
 from typing import Optional
 
+import contextlib
+from pathlib import Path
+
 import typer
 
 from gwex import core
+
+@contextlib.contextmanager
+def _keep_drawings(target: str, output=None, except_sheets=None):
+    """openpyxl 系コマンドで落ちる drawing（画像・図形・コメントVML）を前後で保全する。"""
+    from gwex.writer import base as _base
+
+    snap = _base.snapshot_if_xlsx(target)
+    try:
+        yield
+    finally:
+        dest = output or target
+        try:
+            _base.preserve_drawings(target, dest, snap, except_sheets=except_sheets)
+        except Exception as e:  # 保全に失敗しても本処理は成功させる
+            typer.echo(f"[warn] 図形の保全に失敗しました: {e}")
+
 
 app = typer.Typer(add_completion=False, help="文書を Markdown / typed JSON に変換する")
 
@@ -170,7 +189,8 @@ def insert_rows_cmd(
     """指定位置に行を挿入し、結合/行高/条件付き書式/dv をシフトする（修正内容の依頼行追加用）。"""
     from gwex.writer import xlsx_rows
 
-    dest = xlsx_rows.insert_rows(target, sheet, at, count, template_row=template_row, output=output)
+    with _keep_drawings(target, output):
+        dest = xlsx_rows.insert_rows(target, sheet, at, count, template_row=template_row, output=output)
     typer.echo(f"行を挿入しました（{at} の直前に {count} 行）: {dest}")
 
 
@@ -185,7 +205,8 @@ def delete_rows(
     """指定シートの行を削除し、結合/行高/条件付き書式/dv をシフトする（未使用サンプル行・ブロック削除用）。"""
     from gwex.writer import xlsx_rows
 
-    dest = xlsx_rows.delete_rows(target, sheet, start, count, output=output)
+    with _keep_drawings(target, output):
+        dest = xlsx_rows.delete_rows(target, sheet, start, count, output=output)
     typer.echo(f"行を削除しました（{start} から {count} 行）: {dest}")
 
 
@@ -278,8 +299,45 @@ def clear_images(
     """シートの埋め込み画像を全削除する（set-image の逆。スプシ変換前の画像なし版作成用）。"""
     from gwex.writer import xlsx_rows
 
-    dest, n = xlsx_rows.clear_images(target, sheet, output=output)
+    with _keep_drawings(target, output, except_sheets={sheet}):
+        dest, n = xlsx_rows.clear_images(target, sheet, output=output)
     typer.echo(f"画像を {n} 件削除しました: {dest}")
+
+
+@app.command(name="set-table")
+def set_table(
+    target: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    sheet: str = typer.Option(..., "--sheet", help="対象シート名"),
+    start_cell: str = typer.Option(..., "--start-cell", help="左上セル（例: B10）"),
+    json_file: str = typer.Option(..., "--json", help="2次元配列の JSON ファイル"),
+    no_header: bool = typer.Option(False, "--no-header", help="先頭行を見出し扱いしない"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
+) -> None:
+    """2次元配列(JSON)を一括で書き込む（罫線つき・先頭行は見出し）。set-text の反復を置き換える。"""
+    import json as _json
+
+    from gwex.writer import xlsx_rows
+
+    rows = _json.loads(Path(json_file).read_text())
+    with _keep_drawings(target, output):
+        dest = xlsx_rows.set_table(target, sheet, start_cell, rows, header=not no_header, output=output)
+    typer.echo(f"表を書き込みました: {len(rows)} 行 -> {dest}")
+
+
+@app.command(name="add-sheet")
+def add_sheet(
+    target: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    sheet: str = typer.Option(..., "--sheet", help="追加するシート名"),
+    index: Optional[int] = typer.Option(None, "--index", help="挿入位置（0始まり・省略時は末尾）"),
+    exist_ok: bool = typer.Option(False, "--exist-ok", help="同名シートがあってもエラーにしない"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
+) -> None:
+    """空シートを追加する（レビュー結果シート等の追記用・xlsx のみ）。"""
+    from gwex.writer import xlsx_rows
+
+    with _keep_drawings(target, output):
+        dest = xlsx_rows.add_sheet(target, sheet, index=index, exist_ok=exist_ok, output=output)
+    typer.echo(f"シートを追加しました: {sheet} -> {dest}")
 
 
 @app.command(name="extract-sheet")
@@ -306,7 +364,8 @@ def set_text(
 ) -> None:
     from gwex.writer import base
 
-    dest = base.set_cell_text(target, sheet, cell, text, value_type=value_type, output=output)
+    with _keep_drawings(target, output):
+        dest = base.set_cell_text(target, sheet, cell, text, value_type=value_type, output=output)
     typer.echo(f"書き込みました: {dest}")
 
 
@@ -539,10 +598,11 @@ def set_section(
     --before/--after 両方省略時は枠のみ作成（画像なし・n-rows 省略時は34行）。
     """
     lc = tuple(left_cols.split(","))
-    dest = core.create_section(
-        target, sheet, top_row, title, before, after,
-        left_cols=lc, split_col=split_col, scale=scale, n_rows=n_rows, output=output,
-    )
+    with _keep_drawings(target, output, except_sheets={sheet}):
+        dest = core.create_section(
+            target, sheet, top_row, title, before, after,
+            left_cols=lc, split_col=split_col, scale=scale, n_rows=n_rows, output=output,
+        )
     typer.echo(f"枠付きセクションを作成しました: {dest}")
 
 
@@ -557,7 +617,8 @@ def set_row_height_cmd(
     """指定行の行高を設定する（xlsx のみ対応）。"""
     from gwex.writer import base
 
-    dest = base.set_row_height(xlsx, sheet, row, height, output=output)
+    with _keep_drawings(xlsx, output):
+        dest = base.set_row_height(xlsx, sheet, row, height, output=output)
     typer.echo(f"行高を設定しました: {dest}")
 
 
@@ -572,7 +633,8 @@ def set_col_width_cmd(
     """指定列の幅を設定する（xlsx=Excel列幅単位 / Google=pixel）。画像枠の左右非対称是正用。"""
     from gwex.writer import base
 
-    dest = base.set_col_width(target, sheet, col, width, output=output)
+    with _keep_drawings(target, output):
+        dest = base.set_col_width(target, sheet, col, width, output=output)
     typer.echo(f"列幅を設定しました ({col}): {dest}")
 
 

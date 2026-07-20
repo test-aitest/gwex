@@ -253,6 +253,23 @@ gwex update-case ./design.xlsx --sheet "3.結合テスト項目" --row 42 \
 
 ### セル操作
 
+#### `gwex add-sheet <xlsx> --sheet <名>` — 空シートを追加
+`--index N` で挿入位置（0始まり・省略時は末尾）、`--exist-ok` で同名シートがあってもエラーにしない。
+レビュー結果シートの追加など、既存ブックに新しいシートを足すときに使う。xlsx のみ。
+
+```bash
+gwex add-sheet ./design.xlsx --sheet "レビュー結果" --exist-ok
+```
+
+#### `gwex set-table <xlsx> --sheet <名> --start-cell <C> --json <rows.json>` — 表を一括書き込み
+2次元配列（JSON）を start-cell を左上として書き込む。先頭行は見出し（太字＋薄青塗り）、全セルに罫線と
+折り返しが付く。`--no-header` で見出し扱いを外す。**`set-text` を何十回も叩く代わりに使う**（xlsx のみ）。
+
+```bash
+echo '[["No","指摘","重大度"],["1","フォントサイズ不一致","高"]]' > rows.json
+gwex set-table ./design.xlsx --sheet "レビュー結果" --start-cell B10 --json rows.json
+```
+
 #### `gwex set-text <target> --sheet <名> --cell <C> --text <文字>` — セルにテキスト
 `--type` で値の型（文字列／数値等）を指定可。
 ```bash
@@ -285,7 +302,10 @@ gwex set-image ./design.xlsx --sheet "2.画面イメージ(iOS)" --cell C7 --ran
 ```bash
 gwex annotate-image ./design.xlsx --sheet "2.画面イメージ(iOS)" --name capture2 --rect "100,508,128,66:1"
 ```
-注意: openpyxl 系コマンド（`set-text` 等）で保存すると**図形だけ消える**（画像は残る）ため、注釈はワークフローの最終段で実行する（消えたら再実行）。
+注意: openpyxl 系コマンド（`set-text` 等）で保存すると**そのシートの図形が消える**ことがある。
+テンプレ由来の図形・画像は `xlsx_zip.restore_drawings()` が自動で復元するが（2026-07-14 追加）、
+**同じシートに画像がある場合、後から openpyxl 系を流すと annotate-image の赤枠だけ落ちる**（画像は openpyxl が引き継ぐため復元対象外になる）。
+→ 注釈はこれまで通り**ワークフローの最終段**で実行する（消えたら再実行すれば同位置に戻る）。
 
 #### `gwex clear-annotations <xlsx> --sheet <名>` — 注釈図形を除去
 `annotate-image` が注入した赤枠・番号バッジを全て除去する（画像は残す）。`-o` 省略で in-place。
@@ -299,7 +319,7 @@ spec の形式は `gwex.writer.xlsx_flow` の docstring を参照（nodes: 画�
 ```bash
 gwex draw-flow ./振込フロー.xlsx --spec flow.yaml
 ```
-注意: 生成した遷移図を openpyxl 系コマンドで再保存すると図形が消えるため、編集せず成果物として扱う（変更は spec を直して再生成）。
+注意: 生成した遷移図は矢印・赤枠が図形なので、openpyxl 系コマンドで再保存すると落ちうる。編集せず成果物として扱う（変更は spec を直して再生成）。
 
 #### `gwex flow-spec <graph.yaml> --from <画面> --to <画面>` — 遷移図 spec の雛形を生成
 UI クローラーが構築したスクリーングラフ（`screens/components/navigators` 形式、例: devpilot-graph.yaml）から

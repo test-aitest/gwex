@@ -7,10 +7,12 @@ client_secret.json（自分の GCP で発行した Desktop クライアント）
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -81,6 +83,14 @@ def _granted_scopes() -> set[str]:
         return set()
 
 
+def _backup_stale_token(reason: str) -> None:
+    """使えなくなった token.json をタイムスタンプ付きで退避する（原因の追跡用）。"""
+    if not TOKEN_PATH.exists():
+        return
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    TOKEN_PATH.rename(TOKEN_PATH.with_name(f"{TOKEN_PATH.name}.{reason}_{ts}"))
+
+
 def get_credentials() -> Credentials:
     """有効な認証情報を返す。無ければ／付与スコープ不足なら OAuth 同意フローを走らせる。"""
     creds: Credentials | None = None
@@ -90,11 +100,16 @@ def get_credentials() -> Credentials:
         if creds.valid:
             return creds
         if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
-            return creds
-    # トークン無し or スコープ不足 → 新規同意（ブラウザ）
+            try:
+                creds.refresh(Request())
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+                return creds
+            except RefreshError:
+                # refresh_token 自体が失効/取り消し（テストステータスの 7 日失効など）。
+                # 古いトークンを退避し、下の新規同意フローへフォールバックする。
+                _backup_stale_token("revoked")
+    # トークン無し or スコープ不足 or refresh 失敗 → 新規同意（ブラウザ）
     creds = _build_flow().run_local_server(port=0)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")

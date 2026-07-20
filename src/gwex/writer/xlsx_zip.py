@@ -140,6 +140,70 @@ def _drawing_for_sheet(entries: dict[str, bytes], sheet_xml: str) -> tuple[str, 
     return draw_path, draw_rels
 
 
+def _expand_self_closed_wsdr(dx: str) -> str:
+    """空の drawing が `<xdr:wsDr .../>`（自己終了）で書かれていると、`</xdr:wsDr>` を
+    探す追記ロジックが黙って何もしない。開始タグ＋閉じタグの形に正規化する。
+
+    テンプレ（Excel が書いた xlsx）の未使用シートの drawing は実際に自己終了形式。
+    """
+    m = re.match(r"(\s*<\?xml[^>]*\?>)?\s*<((?:\w+:)?wsDr)\b([^>]*?)/>\s*$", dx, re.S)
+    if not m:
+        return dx
+    decl = m.group(1) or ""
+    tag, attrs = m.group(2), m.group(3)
+    return f"{decl}<{tag}{attrs}></{tag}>"
+
+
+_XDR_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+_A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+
+def _ensure_drawing_namespaces(dx: str) -> str:
+    """openpyxl が書いた drawing は既定名前空間（接頭辞なし）のことがある。
+    xdr:/a:/r: 接頭辞のアンカーを差し込む前に、ルートへ宣言を補う。"""
+    m = re.search(r"<(?:xdr:)?wsDr\b[^>]*>", dx)
+    if not m:
+        return dx
+    tag = m.group(0)
+    add = ""
+    if "xmlns:xdr=" not in tag:
+        add += f' xmlns:xdr="{_XDR_NS}"'
+    if "xmlns:a=" not in tag:
+        add += f' xmlns:a="{_A_NS}"'
+    if "xmlns:r=" not in tag:
+        add += f' xmlns:r="{_R_NS}"'
+    if not add:
+        return dx
+    new_tag = tag[:-1].rstrip() + add + ">"
+    return dx[: m.start()] + new_tag + dx[m.end():]
+
+
+_ANCHOR_RE = re.compile(
+    r"<(?:xdr:)?(oneCellAnchor|twoCellAnchor|absoluteAnchor)\b.*?</(?:xdr:)?\1>", re.S)
+
+
+def _shape_anchors(dx: str) -> list[str]:
+    """drawing XML から「図形（sp/grpSp）を含むアンカー」だけを抜き出す。画像アンカーは対象外。"""
+    return [m.group(0) for m in _ANCHOR_RE.finditer(dx)
+            if "<xdr:sp" in m.group(0) or "<xdr:grpSp" in m.group(0)]
+
+
+def _max_shape_id(dx: str) -> int:
+    ids = [int(x) for x in re.findall(r'<xdr:cNvPr[^>]*\bid="(\d+)"', dx)]
+    return max(ids) if ids else 0
+
+
+def _renumber_ids(xml: str, start: int) -> str:
+    """cNvPr の id を start から振り直す（同一 drawing 内で id は一意である必要がある）。"""
+    counter = [start]
+
+    def sub(m):
+        counter[0] += 1
+        return m.group(1) + str(counter[0]) + m.group(3)
+
+    return re.sub(r'(<xdr:cNvPr[^>]*\bid=")(\d+)(")', sub, xml)
+
+
 def _add_rel(entries: dict[str, bytes], rels_path: str, rtype: str, target: str) -> str:
     rels = entries.get(rels_path, b"").decode("utf-8")
     if not rels:
@@ -385,6 +449,7 @@ def set_cell_image(
         f'<{p}spPr><a:prstGeom {a_ns} prst="rect"><a:avLst/></a:prstGeom></{p}spPr>'
         f'</{p}pic><{p}clientData/></{p}oneCellAnchor>'
     )
+    dx = _expand_self_closed_wsdr(dx)
     close = "</xdr:wsDr>" if p else "</wsDr>"
     dx = dx.replace(close, anchor_xml + close)
     entries[draw_path] = dx.encode("utf-8")
@@ -623,6 +688,7 @@ def add_annotations(
             next_id += 1
         seq += 1
 
+    dx = _expand_self_closed_wsdr(dx)
     close = f"</{p}wsDr>"
     entries[draw_path] = dx.replace(close, "".join(parts) + close).encode("utf-8")
     dest = output or path
@@ -662,3 +728,194 @@ def remove_annotations(path: str, sheet: str, *, output: Optional[str] = None) -
     entries[draw_path] = dx.encode("utf-8")
     _write_zip(entries, dest)
     return dest, removed
+
+
+# ── 図形（drawing）保全 ────────────────────────────────────────────────
+# openpyxl は load→save の round-trip で drawing（画像・図形・コメントVML）を
+# 落とす。テンプレの注意書きバナー等が消えるため、openpyxl 系コマンドの前後で
+# 元 zip の drawing パーツを退避→再注入する。
+
+
+def snapshot(path: str) -> dict[str, bytes]:
+    """openpyxl 処理の前に元 zip の全パーツを退避する。"""
+    return _read_zip(path)
+
+
+def _sheet_name_map(entries: dict[str, bytes]) -> dict[str, str]:
+    """シート名 -> xl/worksheets/sheetN.xml"""
+    wb = entries["xl/workbook.xml"].decode("utf-8")
+    rels = entries["xl/_rels/workbook.xml.rels"].decode("utf-8")
+    out: dict[str, str] = {}
+    for m in re.finditer(r'<sheet\b[^>]*/>', wb):
+        tag = m.group(0)
+        mn = re.search(r'name="([^"]+)"', tag)
+        mr = re.search(r'r:id="(rId\d+)"', tag)
+        if not (mn and mr):
+            continue
+        rel = re.search(r'<Relationship\b[^>]*\bId="' + re.escape(mr.group(1)) + r'"[^>]*/>', rels)
+        if not rel:
+            continue
+        mt = re.search(r'Target="([^"]+)"', rel.group(0))
+        if not mt:
+            continue
+        t = mt.group(1).lstrip("/")
+        out[mn.group(1)] = t if t.startswith("xl/") else "xl/" + t
+    return out
+
+
+def _next_index(entries: dict[str, bytes], prefix: str, suffix: str) -> int:
+    idx = [int(m.group(1)) for n in entries
+           if (m := re.fullmatch(re.escape(prefix) + r"(\d+)" + re.escape(suffix), n))]
+    return (max(idx) + 1) if idx else 1
+
+
+def _add_content_type(entries: dict[str, bytes], part: str, ctype: str) -> None:
+    ct = entries["[Content_Types].xml"].decode("utf-8")
+    if f'PartName="/{part}"' in ct:
+        return
+    ct = ct.replace("</Types>", f'<Override PartName="/{part}" ContentType="{ctype}"/></Types>')
+    entries["[Content_Types].xml"] = ct.encode("utf-8")
+
+
+_R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+def _ensure_r_namespace(sx: str) -> str:
+    """openpyxl が書いた worksheet には xmlns:r が無いことがある。r:id を使う前に宣言する。"""
+    m = re.search(r"<worksheet\b[^>]*>", sx)
+    if not m or 'xmlns:r=' in m.group(0):
+        return sx
+    tag = m.group(0)
+    new_tag = tag[:-1].rstrip() + f' xmlns:r="{_R_NS}"' + ">"
+    return sx[: m.start()] + new_tag + sx[m.end():]
+
+
+def _insert_before_close(sx: str, element: str) -> str:
+    """<worksheet> の正しい位置に要素を挿す（drawing は legacyDrawing の前）。"""
+    sx = _ensure_r_namespace(sx)
+    for anchor in ("<legacyDrawing", "<picture", "<oleObjects", "</worksheet>"):
+        i = sx.find(anchor)
+        if i != -1:
+            return sx[:i] + element + sx[i:]
+    return sx + element
+
+
+def restore_drawings(orig: dict[str, bytes], dest: str,
+                     except_sheets: Optional[set[str]] = None) -> int:
+    """openpyxl 保存後のファイルに、元 zip の drawing/VML を復元する。
+
+    復元先シートに既に drawing がある場合（gwex が新たに画像を貼ったシート）は
+    そのまま残し、元の drawing は追加しない（新旧の取り違え防止）。
+    戻り値は復元したシート数。
+    """
+    new = _read_zip(dest)
+    orig_sheets = _sheet_name_map(orig)
+    new_sheets = _sheet_name_map(new)
+    restored = 0
+
+    skip = except_sheets or set()
+    for name, o_sheet in orig_sheets.items():
+        if name in skip:
+            continue
+        n_sheet = new_sheets.get(name)
+        if not n_sheet or o_sheet not in orig:
+            continue
+
+        o_base = o_sheet.split("/")[-1]
+        o_rels = orig.get(f"xl/worksheets/_rels/{o_base}.rels", b"").decode("utf-8")
+        if not o_rels:
+            continue
+
+        n_base = n_sheet.split("/")[-1]
+        n_rels_path = f"xl/worksheets/_rels/{n_base}.rels"
+        n_sx = new[n_sheet].decode("utf-8")
+        touched = False
+
+        # 1) drawing（画像・図形）
+        md = re.search(r'Target="([^"]*drawings/(drawing\d+\.xml))"', o_rels)
+        if md and f"xl/drawings/{md.group(2)}" in orig:
+            o_draw = f"xl/drawings/{md.group(2)}"
+            o_name = md.group(2)
+            dx = orig[o_draw].decode("utf-8")
+
+            # openpyxl は「空の drawing の殻」だけ残すことがある（rel は張られているが中身が空）。
+            # 中身のある drawing が既にあるなら触らない（gwex が新たに貼った画像を守る）。
+            existing = _find_drawing(new, n_sheet)
+            target_draw = None
+            merge_shapes = None
+            if existing:
+                nx = new.get(existing[0], b"").decode("utf-8")
+                if "Anchor" not in nx:
+                    # 空殻（openpyxl が rel だけ残した）→ 元の中身をそのまま復元
+                    target_draw = existing[0]
+                # 中身のある drawing（openpyxl が画像だけ引き継いだ等）は触らない。
+                # 図形（annotate-image の赤枠等）はここでは復元しない —— 二重注入で
+                # 画像/図形が重複するため。注釈は従来どおりワークフロー最終段で実行する。
+            else:
+                k = _next_index(new, "xl/drawings/drawing", ".xml")
+                target_draw = f"xl/drawings/drawing{k}.xml"
+
+            if merge_shapes:
+                path_, nx, lost = merge_shapes
+                nx = _ensure_drawing_namespaces(_expand_self_closed_wsdr(nx))
+                block = _renumber_ids("".join(lost), _max_shape_id(nx))
+                close = "</xdr:wsDr>" if "</xdr:wsDr>" in nx else "</wsDr>"
+                new[path_] = nx.replace(close, block + close).encode("utf-8")
+                touched = True
+
+            if target_draw:
+                # drawing の rels（media 参照）をコピーしつつ media を採番し直す
+                o_draw_rels = f"xl/drawings/_rels/{o_name}.rels"
+                t_name = target_draw.split("/")[-1]
+                if o_draw_rels in orig:
+                    drels = orig[o_draw_rels].decode("utf-8")
+                    for mm in re.finditer(r'Target="([^"]*media/(image[\w.]+))"', drels):
+                        o_media = f"xl/media/{mm.group(2)}"
+                        if o_media not in orig:
+                            continue
+                        ext = mm.group(2).rsplit(".", 1)[-1]
+                        j = _next_index(new, "xl/media/image", f".{ext}")
+                        new_media = f"xl/media/image{j}.{ext}"
+                        new[new_media] = orig[o_media]
+                        drels = drels.replace(mm.group(1), f"../media/image{j}.{ext}")
+                        _add_content_type(new, new_media,
+                                          f"image/{'jpeg' if ext in ('jpg', 'jpeg') else ext}")
+                    new[f"xl/drawings/_rels/{t_name}.rels"] = drels.encode("utf-8")
+
+                new[target_draw] = dx.encode("utf-8")
+                _add_content_type(new, target_draw,
+                                  "application/vnd.openxmlformats-officedocument.drawing+xml")
+                if not existing:
+                    rid = _add_rel(new, n_rels_path,
+                                   "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing",
+                                   f"../drawings/{t_name}")
+                    n_sx = _insert_before_close(n_sx, f'<drawing r:id="{rid}"/>')
+                touched = True
+
+        # 2) legacyDrawing（コメントの VML）
+        mv = re.search(r'Target="([^"]*drawings/(vmlDrawing\d+\.vml))"', o_rels)
+        if mv and "<legacyDrawing" not in n_sx:
+            o_vml = f"xl/drawings/{mv.group(2)}"
+            if o_vml in orig:
+                k = _next_index(new, "xl/drawings/vmlDrawing", ".vml")
+                new_vml = f"xl/drawings/vmlDrawing{k}.vml"
+                new[new_vml] = orig[o_vml]
+                ct = new["[Content_Types].xml"].decode("utf-8")
+                if 'Extension="vml"' not in ct:
+                    ct = ct.replace("<Types", "<Types", 1).replace(
+                        "</Types>",
+                        '<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/></Types>')
+                    new["[Content_Types].xml"] = ct.encode("utf-8")
+                rid = _add_rel(new, n_rels_path,
+                               "http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing",
+                               f"../drawings/vmlDrawing{k}.vml")
+                n_sx = _insert_before_close(n_sx, f'<legacyDrawing r:id="{rid}"/>')
+                touched = True
+
+        if touched:
+            new[n_sheet] = n_sx.encode("utf-8")
+            restored += 1
+
+    if restored:
+        _write_zip(new, dest)
+    return restored

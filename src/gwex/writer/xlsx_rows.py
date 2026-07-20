@@ -444,3 +444,65 @@ def delete_instruction_row(path: str, sheet: Optional[str] = None,
     dest = output or path
     wb.save(dest)
     return dest, done
+
+
+def add_sheet(path: str, sheet: str, *, index: Optional[int] = None,
+              exist_ok: bool = False, output: Optional[str] = None) -> str:
+    """ローカル .xlsx に空シートを追加する（レビュー結果シート等の追記用）。
+
+    index を渡すとその位置（0始まり）に挿入する。省略時は末尾。
+    既に同名シートがある場合、exist_ok=False なら例外、True なら何もしない。
+    """
+    if Path(path).suffix.lower() != ".xlsx":
+        raise ValueError("add_sheet はローカル .xlsx のみ対応です。")
+    wb = load_workbook(path)
+    if sheet in wb.sheetnames:
+        if not exist_ok:
+            raise ValueError(f"同名シートが既にあります: {sheet}")
+        dest = output or path
+        wb.save(dest)
+        return dest
+    wb.create_sheet(title=sheet, index=index)
+    dest = output or path
+    wb.save(dest)
+    return dest
+
+
+def set_table(path: str, sheet: str, start_cell: str, rows: list[list], *,
+              header: bool = True, output: Optional[str] = None) -> str:
+    """2次元配列を start_cell を左上として一括書き込みする（罫線つき・先頭行は見出し）。
+
+    set-text を何十回も叩く代わりに使う。xlsx のみ。
+    """
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    if Path(path).suffix.lower() != ".xlsx":
+        raise ValueError("set_table はローカル .xlsx のみ対応です。")
+    wb = load_workbook(path)
+    if sheet not in wb.sheetnames:
+        raise ValueError(f"シートがありません: {sheet}")
+    ws = wb[sheet]
+
+    col0, row0 = _split_cell(start_cell)
+    thin = Side(style="thin", color="AAAAAA")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    head_fill = PatternFill("solid", fgColor="E8EDF3")
+
+    for r, line in enumerate(rows):
+        for c, val in enumerate(line):
+            cell = ws.cell(row=row0 + r, column=col0 + c, value=val)
+            cell.border = border
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            if header and r == 0:
+                cell.font = Font(bold=True)
+                cell.fill = head_fill
+
+    dest = output or path
+    wb.save(dest)
+    return dest
+
+
+def _split_cell(cell: str) -> tuple[int, int]:
+    letters = "".join(ch for ch in cell if ch.isalpha())
+    digits = "".join(ch for ch in cell if ch.isdigit())
+    return column_index_from_string(letters), int(digits)
