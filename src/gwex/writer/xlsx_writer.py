@@ -63,6 +63,35 @@ def set_col_width(
     return dest
 
 
+def set_font_color(
+    path: str, sheet: str, cell_range: str, color: str, *, output: Optional[str] = None
+) -> str:
+    """指定セル範囲のフォント色だけを変更する（名前・サイズ・太字・斜体は維持）。
+
+    cell_range はカンマ区切りで複数範囲可（例: "B17:S17,B20:S21"）。
+    color は RRGGBB（6桁）か ARGB（8桁）。6桁時は不透明（FF）を前置する。
+    """
+    from openpyxl.styles import Font
+
+    argb = color if len(color) == 8 else ("FF" + color)
+    wb = load_workbook(path)
+    ws = wb[sheet]
+    for part in cell_range.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        for row in ws[part]:
+            for cell in row:
+                old = cell.font
+                cell.font = Font(
+                    name=old.name, size=old.size, bold=old.bold, italic=old.italic,
+                    underline=old.underline, strike=old.strike, color=argb,
+                )
+    dest = output or path
+    wb.save(dest)
+    return dest
+
+
 def set_merge_cells(
     path: str, sheet: str, ranges: list[str], *, output: Optional[str] = None
 ) -> str:

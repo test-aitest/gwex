@@ -69,6 +69,14 @@ def set_cell_image(
     )
 
 
+def set_font_color(target: str, sheet: str, cell_range: str, color: str, *, output: Optional[str] = None) -> str:
+    """指定セル範囲のフォント色を変更する（ローカル .xlsx のみ）。"""
+    backend, is_google = _backend(target)
+    if is_google:
+        raise ValueError("set_font_color はローカル .xlsx のみ対応です。")
+    return backend.set_font_color(target, sheet, cell_range, color, output=output)
+
+
 def set_row_height(target: str, sheet: str, row: int, height: float, *, output: Optional[str] = None) -> str:
     """行高を設定する（xlsx のみ対応）。"""
     backend, is_google = _backend(target)

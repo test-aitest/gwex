@@ -126,7 +126,8 @@ def write_testspec(
     cfg = core.load_mapping(mapping) if mapping else None
     with open(json_path, encoding="utf-8") as f:
         spec_json = f.read()
-    dest = core.write_testspec(spec_json, target, sheet, cfg, append=append, dedup=dedup, apply_format=fmt, clear_rows=clear_rows, start_row=start_row, output=output)
+    with _keep_drawings(target, output):
+        dest = core.write_testspec(spec_json, target, sheet, cfg, append=append, dedup=dedup, apply_format=fmt, clear_rows=clear_rows, start_row=start_row, output=output)
     typer.echo(f"テスト仕様を書き込みました: {dest}")
 
 
@@ -367,6 +368,22 @@ def set_text(
     with _keep_drawings(target, output):
         dest = base.set_cell_text(target, sheet, cell, text, value_type=value_type, output=output)
     typer.echo(f"書き込みました: {dest}")
+
+
+@app.command(name="set-font-color")
+def set_font_color(
+    target: str = typer.Argument(..., help="ローカル .xlsx パス"),
+    sheet: str = typer.Option(..., "--sheet", help="対象シート名"),
+    cells: str = typer.Option(..., "--cells", help="セル範囲（例: B17:S17）。カンマ区切りで複数可"),
+    color: str = typer.Option("FF0000", "--color", help="フォント色 RRGGBB（既定=赤 FF0000）"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="出力先 .xlsx（既定 in-place）"),
+) -> None:
+    """指定セル範囲のフォント色だけを変更する（レビュー追記の赤文字化用・図形保全）。"""
+    from gwex.writer import base
+
+    with _keep_drawings(target, output):
+        dest = base.set_font_color(target, sheet, cells, color, output=output)
+    typer.echo(f"フォント色を設定しました: {dest}")
 
 
 @app.command(name="set-image")
@@ -665,7 +682,8 @@ def set_merge(
     """セル範囲を結合する（既存結合は事前解除してから再結合）。xlsx のみ対応。"""
     from gwex.writer import base
 
-    dest = base.set_merge_cells(xlsx, sheet, list(merge_range), output=output)
+    with _keep_drawings(xlsx, output):
+        dest = base.set_merge_cells(xlsx, sheet, list(merge_range), output=output)
     typer.echo(f"結合しました: {dest}")
 
 
