@@ -109,13 +109,24 @@ gwex --help
 1. GCP で **Drive / Docs / Sheets / Slides API** を有効化。
 2. **OAuth 2.0 クライアント（デスクトップ）** を作成し、クライアント ID / シークレットを取得。
    - 同意画面が「テスト」状態なら、自分を **テストユーザー**に追加。
-3. リポジトリ直下に `.env` を作成（値は自分のもの。`.env` は `.gitignore` 済みでコミットされません）:
+3. 認証情報を配置する。開発版（`uv tool install --editable`）ならリポジトリ直下に `.env` を作成
+   （値は自分のもの。`.env` は `.gitignore` 済みでコミットされません）:
    ```dotenv
    GWEX_CLIENT_ID="xxxxxxxx.apps.googleusercontent.com"
    GWEX_CLIENT_SECRET_VALUE="GOCSPX-xxxxxxxx"
    # 任意: GWEX_CLIENT_SECRET=/path/to/client_secret.json （JSON ファイルで渡す場合）
    # 任意: GWEX_CONFIG_DIR=~/.config/gwex （token 保存先の上書き）
    ```
+
+   > **配布版（editable でない `uv tool install`）を使う場合**：リポジトリ直下の `.env` は
+   > リポジトリ内から実行したときにしか読み込まれません。どこから実行しても動くよう、
+   > 次のどちらかで設定してください。
+   > - `~/.config/gwex/client_secret.json` に OAuth クライアントの JSON（GCP からダウンロード）を配置
+   > - 環境変数 `GWEX_CLIENT_ID` / `GWEX_CLIENT_SECRET_VALUE`（または
+   >   `GWEX_CLIENT_SECRET=/path/to/client_secret.json`）をシェルの rc 等で設定
+   >
+   > 解決の優先順位は **環境変数 → `~/.config/gwex/client_secret.json` → `.env`** です。
+
 4. 認証（ブラウザが開く。token は `~/.config/gwex/token.json` にキャッシュ）:
    ```bash
    gwex auth
@@ -134,7 +145,7 @@ Sheets REST API にはセル内画像挿入が無いため、Apps Script Web ア
 
 1. <https://script.google.com> で新規プロジェクト → `src/gwex/writer/appscript/gwex_image.gs` を貼付。
 2. 「デプロイ」→「ウェブアプリ」（実行 = 自分 / アクセス = 自分のみ）。
-3. 発行された `/exec` URL を `.env` に登録:
+3. 発行された `/exec` URL を `.env` に登録（配布版では環境変数 `GWEX_APPSCRIPT_URL` として設定）:
    ```dotenv
    GWEX_APPSCRIPT_URL="https://script.google.com/macros/s/XXXX/exec"
    ```

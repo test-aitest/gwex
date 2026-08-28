@@ -1,7 +1,12 @@
 """Google OAuth2（InstalledApp フロー）。privileged 層。
 
-client_secret.json（自分の GCP で発行した Desktop クライアント）を読み、
-トークンを ~/.config/gwex/token.json にキャッシュする。スコープは readonly のみ。
+OAuth クライアント（自分の GCP で発行した Desktop クライアント）を
+**環境変数 → ~/.config/gwex/client_secret.json → .env** の優先順位で解決し、
+トークンを ~/.config/gwex/token.json にキャッシュする。
+
+要求スコープは 5 つ（``SCOPES`` 参照）:
+Drive / Docs / Slides は readonly、``spreadsheets`` は読み書き（シートへの
+書き戻しに必要）、``drive.file`` は自分が作成したファイルの作成・共有（share 用）。
 """
 
 from __future__ import annotations
@@ -11,14 +16,24 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-# プロジェクト root / カレントの .env を読み込む（既存の環境変数は上書きしない）。
+# .env 読み込み前から設定されていた環境変数を記録する
+# （環境変数 → client_secret.json → .env の優先順位判定に使う）。
+_ENV_BEFORE_DOTENV = frozenset(k for k in os.environ if k.startswith("GWEX_"))
+
+# .env を読み込む（既存の環境変数は上書きしない）。
+# 1) このモジュールの位置から上方探索 — editable インストールでリポジトリ直下の .env を拾う
+# 2) カレントディレクトリから上方探索 — uv tool install 等の配布版でも、
+#    リポジトリ内（.env のある場所以下）から実行すれば拾える
 load_dotenv()
+_dotenv_from_cwd = find_dotenv(usecwd=True)
+if _dotenv_from_cwd:
+    load_dotenv(_dotenv_from_cwd)
 
 SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
@@ -29,31 +44,31 @@ SCOPES = [
 ]
 
 def _env(name: str) -> Optional[str]:
-    """環境変数 GWEX_<name> を読む。"""
+    """環境変数 GWEX_<name> を読む（.env 由来の値を含む）。"""
     return os.environ.get(f"GWEX_{name}")
+
+
+def _real_env(name: str) -> Optional[str]:
+    """.env 由来ではなく、プロセス起動時から設定されていた環境変数 GWEX_<name> を読む。"""
+    key = f"GWEX_{name}"
+    return os.environ.get(key) if key in _ENV_BEFORE_DOTENV else None
 
 
 CONFIG_DIR = Path(_env("CONFIG_DIR") or (Path.home() / ".config" / "gwex"))
 TOKEN_PATH = CONFIG_DIR / "token.json"
 
 
-def _client_secret_path() -> Path:
-    env = _env("CLIENT_SECRET")
-    return Path(env) if env else CONFIG_DIR / "client_secret.json"
+def _flow_from(
+    secret_path: Optional[str],
+    client_id: Optional[str],
+    client_secret: Optional[str],
+) -> Optional[InstalledAppFlow]:
+    """client_secret.json のパス、または ID/シークレット値からフローを構築する。
 
-
-def _build_flow() -> InstalledAppFlow:
-    """OAuth フローを構築する。優先順位:
-
-    1. client_secret.json ファイル（GWEX_CLIENT_SECRET / ~/.config/gwex/）
-    2. 環境変数 GWEX_CLIENT_ID + GWEX_CLIENT_SECRET_VALUE（JSON 不要）
+    パスが未指定/存在しない かつ ID/シークレットも揃っていなければ None。
     """
-    secret = _client_secret_path()
-    if secret.exists():
-        return InstalledAppFlow.from_client_secrets_file(str(secret), SCOPES)
-
-    client_id = _env("CLIENT_ID")
-    client_secret = _env("CLIENT_SECRET_VALUE")
+    if secret_path and Path(secret_path).exists():
+        return InstalledAppFlow.from_client_secrets_file(secret_path, SCOPES)
     if client_id and client_secret:
         config = {
             "installed": {
@@ -65,11 +80,38 @@ def _build_flow() -> InstalledAppFlow:
             }
         }
         return InstalledAppFlow.from_client_config(config, SCOPES)
+    return None
+
+
+def _build_flow() -> InstalledAppFlow:
+    """OAuth フローを構築する。優先順位:
+
+    1. 環境変数（GWEX_CLIENT_SECRET のパス、または GWEX_CLIENT_ID + GWEX_CLIENT_SECRET_VALUE）
+    2. ~/.config/gwex/client_secret.json（GWEX_CONFIG_DIR で変更可）
+    3. .env に書かれた同名の変数（開発・editable インストール向けフォールバック）
+    """
+    # 1. 環境変数（.env 由来の値を除く）
+    flow = _flow_from(
+        _real_env("CLIENT_SECRET"), _real_env("CLIENT_ID"), _real_env("CLIENT_SECRET_VALUE")
+    )
+    if flow:
+        return flow
+
+    # 2. 設定ディレクトリの client_secret.json
+    default_secret = CONFIG_DIR / "client_secret.json"
+    if default_secret.exists():
+        return InstalledAppFlow.from_client_secrets_file(str(default_secret), SCOPES)
+
+    # 3. .env 由来の値（従来挙動との互換）
+    flow = _flow_from(_env("CLIENT_SECRET"), _env("CLIENT_ID"), _env("CLIENT_SECRET_VALUE"))
+    if flow:
+        return flow
 
     raise FileNotFoundError(
         "OAuth クライアントが見つかりません。次のいずれかを設定してください:\n"
-        f"  (a) {secret} に client_secret.json を配置\n"
-        "  (b) 環境変数 GWEX_CLIENT_ID と GWEX_CLIENT_SECRET_VALUE を設定（JSON 不要）"
+        "  (a) 環境変数 GWEX_CLIENT_ID と GWEX_CLIENT_SECRET_VALUE を設定（JSON 不要）\n"
+        f"  (b) {default_secret} に client_secret.json を配置\n"
+        "  (c) リポジトリ直下の .env に同名の変数を記述（開発・editable インストール向け）"
     )
 
 
